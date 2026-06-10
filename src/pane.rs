@@ -1,0 +1,183 @@
+use crate::app::App;
+use crate::zone::Zone;
+use crate::{keybinds, splits, state, term};
+use gtk4 as gtk;
+use gtk::prelude::*;
+use libadwaita as adw;
+use std::rc::{Rc, Weak};
+use vte4 as vte;
+use vte4::prelude::*;
+
+/// A pane is the unit splits operate on: a tab bar plus its own tabs.
+/// Widget shape:  Stack[.vmux-pane] { "tabs": Box[TabBar, TabView], "empty": StatusPage }
+pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
+    let tab_view = adw::TabView::new();
+    tab_view.set_hexpand(true);
+    tab_view.set_vexpand(true);
+    let tab_bar = adw::TabBar::new();
+    tab_bar.set_view(Some(&tab_view));
+    tab_bar.set_autohide(false);
+
+    let new_tab_btn = gtk::Button::from_icon_name("tab-new-symbolic");
+    new_tab_btn.add_css_class("flat");
+    new_tab_btn.set_tooltip_text(Some("New tab in this pane"));
+    tab_bar.set_end_action_widget(Some(&new_tab_btn));
+
+    let tabs_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    tabs_box.append(&tab_bar);
+    tabs_box.append(&tab_view);
+
+    let empty = adw::StatusPage::builder()
+        .title("No tabs")
+        .description(format!(
+            "Press {} to open a terminal",
+            keybinds::pretty_accel(&keybinds::accel_for(&app.config.borrow(), "new-tab"))
+        ))
+        .icon_name("utilities-terminal-symbolic")
+        .build();
+
+    let stack = gtk::Stack::new();
+    stack.add_named(&tabs_box, Some("tabs"));
+    stack.add_named(&empty, Some("empty"));
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    stack.add_css_class(splits::PANE_CLASS);
+
+    {
+        let app = app.clone();
+        let zone = zone.clone();
+        let stack = stack.clone();
+        new_tab_btn.connect_clicked(move |_| {
+            if let Some(z) = zone.upgrade() {
+                let cwd = z
+                    .last_focused
+                    .upgrade()
+                    .filter(|t| splits::pane_of(t.upcast_ref()).as_ref() == Some(stack.upcast_ref()))
+                    .and_then(|t| term::cwd_of(&t));
+                new_tab(&app, &z, &stack, cwd);
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        let stack = stack.clone();
+        tab_view.connect_page_attached(move |_, _, _| {
+            stack.set_visible_child_name("tabs");
+            app.schedule_save();
+        });
+    }
+    {
+        let app = app.clone();
+        let stack = stack.clone();
+        tab_view.connect_page_detached(move |view, _, _| {
+            if view.root().is_none() {
+                return; // pane already being torn down
+            }
+            if view.n_pages() == 0 {
+                let pane: gtk::Widget = stack.clone().upcast();
+                let in_split = pane
+                    .parent()
+                    .map(|p| p.is::<gtk::Paned>())
+                    .unwrap_or(false);
+                if in_split {
+                    if let Some(promoted) = splits::collapse_leaf(&pane)
+                        && let Some(t) = splits::first_terminal_in(&promoted)
+                    {
+                        term::focus_later(&t);
+                    }
+                } else {
+                    stack.set_visible_child_name("empty");
+                }
+            } else if let Some(page) = view.selected_page()
+                && let Some(t) = splits::first_terminal_in(&page.child())
+            {
+                term::focus_later(&t);
+            }
+            app.schedule_save();
+        });
+    }
+    {
+        let app = app.clone();
+        tab_view.connect_page_reordered(move |_, _, _| app.schedule_save());
+    }
+
+    stack
+}
+
+pub fn tab_view_of(pane: &gtk::Widget) -> Option<adw::TabView> {
+    let stack = pane.downcast_ref::<gtk::Stack>()?;
+    let tabs_box = stack.child_by_name("tabs")?;
+    let mut child = tabs_box.first_child();
+    while let Some(c) = child {
+        if let Ok(view) = c.clone().downcast::<adw::TabView>() {
+            return Some(view);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<String>) {
+    let Some(view) = tab_view_of(pane.upcast_ref()) else {
+        return;
+    };
+    let cwd = cwd
+        .filter(|c| std::path::Path::new(c).is_dir())
+        .unwrap_or_else(|| zone.cwd.clone());
+    let leaf = term::build_leaf(app, &Rc::downgrade(zone), cwd.clone());
+    let page = view.append(&leaf);
+    page.set_keyword(&cwd);
+    page.set_title(&state::display_name(&cwd));
+
+    if let Some(t) = splits::first_terminal_in(leaf.upcast_ref()) {
+        {
+            let pw = page.downgrade();
+            t.connect_window_title_changed(move |term| {
+                if let Some(page) = pw.upgrade() {
+                    refresh_title(term, &page);
+                }
+            });
+        }
+        {
+            let pw = page.downgrade();
+            let app = app.clone();
+            t.connect_current_directory_uri_changed(move |term| {
+                if let Some(page) = pw.upgrade() {
+                    if let Some(cwd) = term::cwd_of(term) {
+                        page.set_keyword(&cwd);
+                    }
+                    refresh_title(term, &page);
+                }
+                app.schedule_save();
+            });
+        }
+        term::focus_later(&t);
+    }
+    view.set_selected_page(&page);
+    app.schedule_save();
+}
+
+/// Close the tab that contains `terminal` (the pane collapses automatically
+/// when its last tab goes, via page-detached).
+pub fn close_tab_of(terminal: &vte::Terminal) {
+    let Some(leaf) = terminal.parent() else { return };
+    let Some(pane) = splits::pane_of(&leaf) else { return };
+    let Some(view) = tab_view_of(&pane) else { return };
+    for i in 0..view.n_pages() {
+        let page = view.nth_page(i);
+        if page.child() == leaf {
+            view.close_page(&page);
+            return;
+        }
+    }
+}
+
+fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
+    let title = terminal
+        .window_title()
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .or_else(|| term::cwd_of(terminal).map(|c| state::display_name(&c)))
+        .unwrap_or_else(|| page.title().to_string());
+    page.set_title(&title);
+}
