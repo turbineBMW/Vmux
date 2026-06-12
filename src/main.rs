@@ -35,6 +35,20 @@ window.vmux-transparent paned > separator {
     background-image: image(var(--sidebar-border-color));
     box-shadow: none;
 }
+/* Only the focused pane's selected tab carries the accent; selected tabs in
+   unfocused panes fade to a faint gray so the eye finds focus immediately.
+   Stock Adwaita hides the highlight entirely on single-tab panes, so these
+   also deliberately out-rank tabbox.single-tab: a lone tab still shows
+   focus. */
+tabbar tab:selected { background-color: color-mix(in srgb, currentColor 5%, transparent); }
+tabbar tab:selected:hover { background-color: color-mix(in srgb, currentColor 9%, transparent); }
+tabbar tab:selected:active { background-color: color-mix(in srgb, currentColor 14%, transparent); }
+.vmux-pane:focus-within tabbar tab:selected {
+    background-color: color-mix(in srgb, var(--accent-bg-color) 25%, transparent);
+    color: var(--accent-color);
+}
+.vmux-pane:focus-within tabbar tab:selected:hover { background-color: color-mix(in srgb, var(--accent-bg-color) 30%, transparent); }
+.vmux-pane:focus-within tabbar tab:selected:active { background-color: color-mix(in srgb, var(--accent-bg-color) 38%, transparent); }
 ";
 
 fn main() -> glib::ExitCode {
