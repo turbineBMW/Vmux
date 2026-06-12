@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::state;
 use crate::zone::Zone;
 use gtk4 as gtk;
-use gtk4::glib;
+use gtk4::{gio, glib};
 use gtk::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -13,6 +13,8 @@ pub struct Chrome {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    pub titlebar: adw::HeaderBar,
+    pub sidebar_hide_btn: gtk::Button,
     pub new_zone_btn: gtk::Button,
     pub settings_btn: gtk::Button,
 }
@@ -30,8 +32,33 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
-    let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    sidebar.append(&scroll);
+    // Sidebar header: app title plus the overflow menu, so the window can
+    // still be driven when the titlebar is hidden.
+    let sidebar_header = adw::HeaderBar::new();
+    sidebar_header.set_show_start_title_buttons(false);
+    sidebar_header.set_show_end_title_buttons(false);
+    sidebar_header.set_title_widget(Some(&adw::WindowTitle::new("Vmux", "")));
+    // Only shown while the titlebar (and its sidebar toggle) is hidden;
+    // visibility is managed by App::sync_titlebar.
+    let sidebar_hide_btn = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    sidebar_hide_btn.set_tooltip_text(Some("Hide sidebar"));
+    sidebar_hide_btn.set_visible(false);
+    sidebar_header.pack_start(&sidebar_hide_btn);
+    let menu = gio::Menu::new();
+    menu.append(Some("Hide Sidebar"), Some("win.hide-sidebar"));
+    menu.append(Some("Add Workspace"), Some("win.add-workspace"));
+    menu.append(Some("Close Workspace"), Some("win.close-workspace"));
+    menu.append(Some("Settings"), Some("win.preferences"));
+    menu.append(Some("Quit"), Some("win.quit"));
+    let menu_btn = gtk::MenuButton::new();
+    menu_btn.set_icon_name("view-more-symbolic");
+    menu_btn.set_tooltip_text(Some("Menu"));
+    menu_btn.set_menu_model(Some(&menu));
+    sidebar_header.pack_end(&menu_btn);
+
+    let sidebar = adw::ToolbarView::new();
+    sidebar.add_top_bar(&sidebar_header);
+    sidebar.set_content(Some(&scroll));
 
     let stack = gtk::Stack::new();
     stack.set_hexpand(true);
@@ -43,6 +70,10 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
     split_view.set_sidebar(Some(&sidebar));
     split_view.set_content(Some(&stack));
     split_view.set_show_sidebar(true);
+    {
+        let split_view = split_view.clone();
+        sidebar_hide_btn.connect_clicked(move |_| split_view.set_show_sidebar(false));
+    }
 
     let header = adw::HeaderBar::new();
     let toggle = gtk::ToggleButton::new();
@@ -63,6 +94,7 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
     header.pack_end(&settings_btn);
 
     let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_css_class("vmux-chrome");
     toolbar_view.add_top_bar(&header);
     toolbar_view.set_content(Some(&split_view));
     window.set_content(Some(&toolbar_view));
@@ -72,6 +104,8 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
         split_view,
         stack,
         listbox,
+        titlebar: header,
+        sidebar_hide_btn,
         new_zone_btn,
         settings_btn,
     }
@@ -105,6 +139,49 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
             glib::Propagation::Proceed
         });
     }
+    // Sidebar overflow-menu actions ("win." scope).
+    {
+        let split_view = chrome.split_view.clone();
+        let act = gio::SimpleAction::new("hide-sidebar", None);
+        act.connect_activate(move |_, _| split_view.set_show_sidebar(false));
+        chrome.window.add_action(&act);
+    }
+    {
+        let app = app.clone();
+        let act = gio::SimpleAction::new("add-workspace", None);
+        act.connect_activate(move |_, _| new_zone_dialog(&app));
+        chrome.window.add_action(&act);
+    }
+    {
+        let app = app.clone();
+        let act = gio::SimpleAction::new("close-workspace", None);
+        act.connect_activate(move |_, _| {
+            let _ = app.run_action("close-zone");
+        });
+        chrome.window.add_action(&act);
+    }
+    {
+        let app = app.clone();
+        let act = gio::SimpleAction::new("preferences", None);
+        act.connect_activate(move |_, _| crate::keybinds::show_settings(&app));
+        chrome.window.add_action(&act);
+    }
+    {
+        let window = chrome.window.downgrade();
+        let act = gio::SimpleAction::new("quit", None);
+        act.connect_activate(move |_, _| {
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
+        });
+        chrome.window.add_action(&act);
+    }
+    {
+        let app = app.clone();
+        chrome
+            .split_view
+            .connect_show_sidebar_notify(move |_| app.update_sidebar_reveal());
+    }
     {
         let app = app.clone();
         chrome.window.connect_is_active_notify(move |w| {
@@ -112,6 +189,7 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
                 && let Some(zone) = app.active_zone()
             {
                 zone.attention.set_visible(false);
+                app.withdraw_zone_notification(&zone);
             }
         });
     }

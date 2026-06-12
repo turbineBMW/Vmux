@@ -23,6 +23,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("next-tab", "Next Tab", "<Control>Page_Down"),
     ("prev-tab", "Previous Tab", "<Control>Page_Up"),
     ("new-zone", "New Zone", "<Control><Shift>n"),
+    ("close-zone", "Close Zone", "<Control><Alt>w"),
     ("prev-zone", "Previous Zone", "<Control><Alt>Page_Up"),
     ("next-zone", "Next Zone", "<Control><Alt>Page_Down"),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
@@ -74,7 +75,8 @@ pub fn add_sc(ctl: &gtk::ShortcutController, trig: &str, f: impl Fn() -> glib::P
     }
 }
 
-/// The settings dialog: General (font/scrollback/shell) + all keybindings.
+/// The settings dialog: General (font/scrollback/shell), Appearance
+/// (terminal colors), and all keybindings.
 pub fn show_settings(app: &Rc<App>) {
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title("Preferences");
@@ -209,8 +211,59 @@ pub fn show_settings(app: &Rc<App>) {
         });
     }
     group.add(&scroll_row);
+
     general.add(&group);
+
+    let window_group = adw::PreferencesGroup::new();
+    window_group.set_title("Window");
+    let titlebar_row = adw::SwitchRow::builder()
+        .title("Hide titlebar")
+        .subtitle("Also hides the window controls — use the sidebar menu to quit")
+        .active(app.config.borrow().hide_titlebar)
+        .build();
+    {
+        let app = app.clone();
+        titlebar_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().hide_titlebar = row.is_active();
+            app.sync_titlebar();
+            app.schedule_save();
+        });
+    }
+    window_group.add(&titlebar_row);
+    general.add(&window_group);
+
+    let notif_group = adw::PreferencesGroup::new();
+    notif_group.set_title("Notifications");
+    let notif_row = adw::SwitchRow::builder()
+        .title("Desktop notifications")
+        .subtitle("Notify when a background terminal requests attention")
+        .active(app.config.borrow().desktop_notifications)
+        .build();
+    {
+        let app = app.clone();
+        notif_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().desktop_notifications = row.is_active();
+            app.schedule_save();
+        });
+    }
+    notif_group.add(&notif_row);
+    let bell_row = adw::SwitchRow::builder()
+        .title("Notify on terminal bell")
+        .subtitle("Also send a desktop notification when a background terminal rings the bell")
+        .active(app.config.borrow().notify_on_bell)
+        .build();
+    {
+        let app = app.clone();
+        bell_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().notify_on_bell = row.is_active();
+            app.schedule_save();
+        });
+    }
+    notif_group.add(&bell_row);
+    general.add(&notif_group);
     dialog.add(&general);
+
+    dialog.add(&crate::appearance::page(app));
 
     // --- Keybindings page ---
     let keys_page = adw::PreferencesPage::builder()

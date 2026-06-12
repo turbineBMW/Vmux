@@ -1,7 +1,7 @@
 use crate::zone::Zone;
-use crate::{keybinds, pane, splits, state, term, window};
+use crate::{keybinds, pane, splits, state, term, text_bindings, window};
 use gtk4 as gtk;
-use gtk4::glib;
+use gtk4::{gio, glib};
 use gtk::prelude::*;
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -14,12 +14,17 @@ pub struct App {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    pub titlebar: adw::HeaderBar,
+    pub sidebar_hide_btn: gtk::Button,
     pub zones: RefCell<Vec<Rc<Zone>>>,
     pub config: RefCell<state::Config>,
     pub font_scale: Cell<f64>,
+    /// Key -> bytes bindings from bindings.conf, shared by every terminal.
+    pub text_bindings: RefCell<Vec<text_bindings::TextBinding>>,
     save_source: RefCell<Option<glib::SourceId>>,
     next_zone_id: Cell<u64>,
     shortcut_ctl: RefCell<Option<gtk::ShortcutController>>,
+    bindings_monitor: RefCell<Option<gio::FileMonitor>>,
 }
 
 pub fn build(gtk_app: &adw::Application) {
@@ -30,15 +35,38 @@ pub fn build(gtk_app: &adw::Application) {
         split_view: chrome.split_view.clone(),
         stack: chrome.stack.clone(),
         listbox: chrome.listbox.clone(),
+        titlebar: chrome.titlebar.clone(),
+        sidebar_hide_btn: chrome.sidebar_hide_btn.clone(),
         zones: RefCell::new(Vec::new()),
         config: RefCell::new(st.config.clone()),
         font_scale: Cell::new(1.0),
+        text_bindings: RefCell::new(text_bindings::load()),
         save_source: RefCell::new(None),
         next_zone_id: Cell::new(1),
         shortcut_ctl: RefCell::new(None),
+        bindings_monitor: RefCell::new(None),
     });
     window::wire_chrome(&app, &chrome);
+    // Notification clicks land here: switch to the originating zone and
+    // present the window (focus follows compositor policy via the
+    // activation token, when the notification daemon provides one).
+    {
+        let app = app.clone();
+        let act = gio::SimpleAction::new("focus-zone", Some(glib::VariantTy::UINT64));
+        act.connect_activate(move |_, param| {
+            let Some(id) = param.and_then(|v| v.get::<u64>()) else { return };
+            let idx = app.zones.borrow().iter().position(|z| z.id == id);
+            if let Some(idx) = idx {
+                app.select_zone(idx);
+            }
+            app.window.present();
+        });
+        gtk_app.add_action(&act);
+    }
+    app.sync_window_transparency();
+    app.sync_titlebar();
     app.reinstall_shortcuts();
+    app.watch_text_bindings();
     for zs in &st.zones {
         app.append_zone(zs);
     }
@@ -65,6 +93,12 @@ impl App {
             "prev-tab" => self.cycle_tab(false),
             "new-zone" => {
                 window::new_zone_dialog(self);
+                glib::Propagation::Stop
+            }
+            "close-zone" => {
+                if let Some(zone) = self.active_zone() {
+                    window::remove_zone_dialog(self, &zone);
+                }
                 glib::Propagation::Stop
             }
             "prev-zone" => self.cycle_zone(false),
@@ -113,6 +147,30 @@ impl App {
         *self.shortcut_ctl.borrow_mut() = Some(ctl);
     }
 
+    /// Hot-reload bindings.conf whenever it changes on disk (Deleted included:
+    /// load() then regenerates the template).
+    fn watch_text_bindings(self: &Rc<Self>) {
+        let file = gio::File::for_path(text_bindings::path());
+        match file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
+            Ok(monitor) => {
+                let app = self.clone();
+                monitor.connect_changed(move |_, _, _, event| {
+                    use gio::FileMonitorEvent as E;
+                    if matches!(
+                        event,
+                        E::ChangesDoneHint | E::Renamed | E::MovedIn | E::Created | E::Deleted
+                    ) {
+                        *app.text_bindings.borrow_mut() = text_bindings::load();
+                    }
+                });
+                *self.bindings_monitor.borrow_mut() = Some(monitor);
+            }
+            Err(e) => {
+                eprintln!("vmux: cannot watch {}: {e}", text_bindings::path().display());
+            }
+        }
+    }
+
     // ----- zones ---------------------------------------------------------
 
     fn append_zone(self: &Rc<Self>, zs: &state::ZoneState) -> Rc<Zone> {
@@ -122,6 +180,7 @@ impl App {
         self.stack.add_named(&zone.page, Some(&zone.stack_name()));
         self.listbox.append(&zone.row);
         self.zones.borrow_mut().push(zone.clone());
+        self.update_sidebar_reveal();
         zone
     }
 
@@ -141,6 +200,7 @@ impl App {
     pub fn remove_zone(self: &Rc<Self>, zone: &Rc<Zone>) {
         let idx_opt = self.zones.borrow().iter().position(|z| Rc::ptr_eq(z, zone));
         let Some(idx) = idx_opt else { return };
+        self.withdraw_zone_notification(zone);
         self.zones.borrow_mut().remove(idx);
         self.listbox.remove(&zone.row);
         self.stack.remove(&zone.page);
@@ -207,6 +267,7 @@ impl App {
         };
         self.stack.set_visible_child_name(&zone.stack_name());
         zone.attention.set_visible(false);
+        self.withdraw_zone_notification(&zone);
         let target = zone
             .last_focused
             .upgrade()
@@ -257,6 +318,63 @@ impl App {
             .unwrap_or(false);
         if !visible || !self.window.is_active() {
             zone.attention.set_visible(true);
+            let notify = {
+                let cfg = self.config.borrow();
+                cfg.notify_on_bell && cfg.desktop_notifications
+            };
+            if notify {
+                self.send_zone_notification(zone, &zone.name.borrow(), "Terminal bell");
+            }
+        }
+    }
+
+    /// A notification OSC (9/777/99) arrived from `terminal`, relayed by
+    /// vmux-relay through the vte.ext.vmux.notify termprop.
+    pub fn on_notify(
+        self: &Rc<Self>,
+        zone: &Rc<Zone>,
+        terminal: Option<&vte::Terminal>,
+        title: &str,
+        body: &str,
+    ) {
+        let zone_visible = self
+            .stack
+            .visible_child_name()
+            .map(|n| n == zone.stack_name())
+            .unwrap_or(false);
+        // A background tab's terminal is unmapped even when its zone is the
+        // visible one; if the terminal is already gone, fall back to the
+        // zone-level answer.
+        let pane_visible = terminal.map(|t| t.is_mapped()).unwrap_or(zone_visible);
+        if !zone_visible || !self.window.is_active() {
+            zone.attention.set_visible(true);
+        }
+        if pane_visible && self.window.is_active() {
+            return; // the user is looking at it — ghostty suppresses too
+        }
+        if !self.config.borrow().desktop_notifications {
+            return;
+        }
+        let title = if title.is_empty() { zone.name.borrow().clone() } else { title.to_string() };
+        self.send_zone_notification(zone, &title, body);
+    }
+
+    /// One notification slot per zone: a newer message replaces the stale
+    /// one, and selecting the zone (or refocusing the window) withdraws it.
+    /// Clicking switches to the zone via the app.focus-zone action.
+    fn send_zone_notification(&self, zone: &Zone, title: &str, body: &str) {
+        let Some(gtk_app) = self.window.application() else { return };
+        let n = gio::Notification::new(title);
+        if !body.is_empty() {
+            n.set_body(Some(body));
+        }
+        n.set_default_action_and_target_value("app.focus-zone", Some(&zone.id.to_variant()));
+        gtk_app.send_notification(Some(&zone.stack_name()), &n);
+    }
+
+    pub fn withdraw_zone_notification(&self, zone: &Zone) {
+        if let Some(gtk_app) = self.window.application() {
+            gtk_app.withdraw_notification(&zone.stack_name());
         }
     }
 
@@ -425,11 +543,47 @@ impl App {
         all
     }
 
-    /// Re-apply font/scrollback config to every live terminal.
+    /// Re-apply font/scrollback/opacity config to every live terminal.
     pub fn apply_terminal_config(self: &Rc<Self>) {
         let cfg = self.config.borrow().clone();
         for t in self.all_terminals() {
             term::apply_config(&t, &cfg);
+        }
+        self.sync_window_transparency();
+    }
+
+    /// The "vmux-transparent" class clears the window background so the
+    /// terminal's alpha-blended background reaches the compositor.
+    pub fn sync_window_transparency(self: &Rc<Self>) {
+        if self.config.borrow().background_opacity < 1.0 {
+            self.window.add_css_class("vmux-transparent");
+        } else {
+            self.window.remove_css_class("vmux-transparent");
+        }
+    }
+
+    /// Apply the hide-titlebar setting and re-evaluate the sidebar-reveal
+    /// button.
+    pub fn sync_titlebar(self: &Rc<Self>) {
+        let hide = self.config.borrow().hide_titlebar;
+        self.titlebar.set_visible(!hide);
+        // The sidebar header's own hide button stands in for the titlebar's
+        // toggle while the titlebar is gone.
+        self.sidebar_hide_btn.set_visible(hide);
+        self.update_sidebar_reveal();
+    }
+
+    /// With the titlebar and sidebar both hidden there is no chrome left to
+    /// bring the sidebar back, so the top-left pane's tab bar shows a
+    /// "show sidebar" button.
+    pub fn update_sidebar_reveal(self: &Rc<Self>) {
+        let needed = self.config.borrow().hide_titlebar && !self.split_view.shows_sidebar();
+        for zone in self.zones.borrow().iter() {
+            let mut panes = Vec::new();
+            splits::all_panes_in(zone.page.upcast_ref(), &mut panes);
+            for (i, p) in panes.iter().enumerate() {
+                pane::set_sidebar_reveal_visible(p, needed && i == 0);
+            }
         }
     }
 

@@ -4,12 +4,55 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+// GNOME dark palette
+pub const DEFAULT_PALETTE: [&str; 16] = [
+    "#171421", "#C01C28", "#26A269", "#A2734C", "#12488B", "#A347BA", "#2AA1B3", "#D0CFCC",
+    "#5E5C64", "#F66151", "#33D17A", "#E9AD0C", "#2A7BDE", "#C061CB", "#33C7DE", "#FFFFFF",
+];
+pub const DEFAULT_FOREGROUND: &str = "#D0CFCC";
+pub const DEFAULT_BACKGROUND: &str = "#1D1D20";
+
+/// Terminal colors, each a "#RRGGBB" string.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct Theme {
+    pub foreground: String,
+    pub background: String,
+    /// Color of the block cursor (the character under it keeps the
+    /// background color).
+    pub cursor: String,
+    /// The 16 ANSI palette colors: normal 0–7, bright 8–15. Normalized to
+    /// exactly 16 entries by load().
+    pub palette: Vec<String>,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            foreground: DEFAULT_FOREGROUND.into(),
+            background: DEFAULT_BACKGROUND.into(),
+            cursor: DEFAULT_FOREGROUND.into(),
+            palette: DEFAULT_PALETTE.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
     pub font: Option<String>,
     pub scrollback_lines: i64,
     pub shell: Option<String>,
+    /// Terminal background opacity, 0.0–1.0 (1.0 = opaque).
+    pub background_opacity: f64,
+    /// Hide the window titlebar (the sidebar header keeps the app menu).
+    pub hide_titlebar: bool,
+    /// Desktop notifications when a background terminal emits a
+    /// notification escape (OSC 9 / 777 / kitty 99).
+    pub desktop_notifications: bool,
+    /// Also raise a desktop notification on the terminal bell.
+    pub notify_on_bell: bool,
+    pub theme: Theme,
     /// Overrides of the default keybindings, action id -> accelerator
     /// ("" disables the binding). Defaults live in keybinds::ACTIONS.
     pub keybindings: BTreeMap<String, String>,
@@ -21,6 +64,11 @@ impl Default for Config {
             font: None,
             scrollback_lines: 10_000,
             shell: None,
+            background_opacity: 1.0,
+            hide_titlebar: false,
+            desktop_notifications: true,
+            notify_on_bell: false,
+            theme: Theme::default(),
             keybindings: BTreeMap::new(),
         }
     }
@@ -116,6 +164,11 @@ pub fn load() -> AppState {
         st.zones.push(ZoneState::default());
     }
     st.active_zone = st.active_zone.min(st.zones.len() - 1);
+    let pal = &mut st.config.theme.palette;
+    while pal.len() < DEFAULT_PALETTE.len() {
+        pal.push(DEFAULT_PALETTE[pal.len()].into());
+    }
+    pal.truncate(DEFAULT_PALETTE.len());
     st
 }
 
@@ -162,4 +215,32 @@ pub fn display_name(cwd: &str) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| cwd.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_without_theme_gets_defaults() {
+        let cfg: Config = serde_json::from_str(r#"{"scrollback_lines": 5000}"#).unwrap();
+        assert_eq!(cfg.scrollback_lines, 5000);
+        assert_eq!(cfg.theme.foreground, DEFAULT_FOREGROUND);
+        assert_eq!(cfg.theme.background, DEFAULT_BACKGROUND);
+        assert_eq!(cfg.theme.cursor, DEFAULT_FOREGROUND);
+        assert_eq!(cfg.theme.palette.len(), DEFAULT_PALETTE.len());
+        assert!(cfg.desktop_notifications);
+        assert!(!cfg.notify_on_bell);
+    }
+
+    #[test]
+    fn theme_round_trips_through_json() {
+        let mut cfg = Config::default();
+        cfg.theme.palette[1] = "#FF0000".into();
+        cfg.theme.cursor = "#ABCDEF".into();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.theme.palette[1], "#FF0000");
+        assert_eq!(back.theme.cursor, "#ABCDEF");
+    }
 }

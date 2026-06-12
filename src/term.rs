@@ -8,13 +8,28 @@ use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;
 
-// GNOME dark palette
-const PALETTE: [&str; 16] = [
-    "#171421", "#C01C28", "#26A269", "#A2734C", "#12488B", "#A347BA", "#2AA1B3", "#D0CFCC",
-    "#5E5C64", "#F66151", "#33D17A", "#E9AD0C", "#2A7BDE", "#C061CB", "#33C7DE", "#FFFFFF",
-];
-const FOREGROUND: &str = "#D0CFCC";
-const BACKGROUND: &str = "#1D1D20";
+/// Parse a config color, falling back to the built-in default if the string
+/// is invalid (e.g. hand-edited config).
+pub fn parse_color(s: &str, fallback: &str) -> gtk::gdk::RGBA {
+    gtk::gdk::RGBA::parse(s).unwrap_or_else(|_| gtk::gdk::RGBA::parse(fallback).unwrap())
+}
+
+/// Register the custom termprop vmux-relay uses to deliver desktop
+/// notifications (the safe vte4 crate does not wrap the install call).
+/// vte requires this to run before the first vte::Terminal exists.
+pub fn install_notify_termprop() {
+    let name = std::ffi::CString::new(vmux::osc_scan::TERMPROP_NAME).unwrap();
+    let id = unsafe {
+        vte::ffi::vte_install_termprop(
+            name.as_ptr(),
+            vte::ffi::VTE_PROPERTY_DATA,
+            vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL,
+        )
+    };
+    if id < 0 {
+        eprintln!("vmux: failed to install the notification termprop");
+    }
+}
 
 /// Build a terminal leaf (ScrolledWindow wrapping a vte::Terminal) and spawn
 /// the configured shell in it. Handlers capture Weak<Zone> only — a removed
@@ -43,6 +58,28 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
     }
     term.add_controller(focus);
 
+    // Text bindings (bindings.conf): capture on the parent so they win over
+    // vte's own key handling, but still lose to the window-level shortcuts.
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let app = app.clone();
+        let tw = term.downgrade();
+        keys.connect_key_pressed(move |_, keyval, _code, state| {
+            let Some(term) = tw.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            let mods = state & gtk::accelerator_get_default_mod_mask();
+            let bindings = app.text_bindings.borrow();
+            let Some(b) = bindings.iter().find(|b| b.matches(keyval, mods)) else {
+                return glib::Propagation::Proceed;
+            };
+            term.feed_child(&b.bytes);
+            glib::Propagation::Stop
+        });
+    }
+    scrolled.add_controller(keys);
+
     {
         let app = app.clone();
         let zone = zone.clone();
@@ -50,6 +87,27 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
             if let Some(zone) = zone.upgrade() {
                 app.on_bell(&zone);
             }
+        });
+    }
+    {
+        let app = app.clone();
+        let zone = zone.clone();
+        term.connect_termprop_changed(Some(vmux::osc_scan::TERMPROP_NAME), move |term, _name| {
+            // Ephemeral termprop: the value is only readable during this
+            // emission, and vte allows nothing but get_termprop_* calls in
+            // the handler — copy the data out and defer the real work.
+            let data = term.termprop_data(vmux::osc_scan::TERMPROP_NAME);
+            let Ok(msg) = serde_json::from_slice::<vmux::osc_scan::NotifyPayload>(&data) else {
+                return;
+            };
+            let app = app.clone();
+            let zone = zone.clone();
+            let tw = term.downgrade();
+            glib::idle_add_local_once(move || {
+                if let Some(zone) = zone.upgrade() {
+                    app.on_notify(&zone, tw.upgrade().as_ref(), &msg.title, &msg.body);
+                }
+            });
         });
     }
     {
@@ -68,25 +126,26 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
 }
 
 fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
-    let fg = gtk::gdk::RGBA::parse(FOREGROUND).unwrap();
-    let bg = gtk::gdk::RGBA::parse(BACKGROUND).unwrap();
-    let palette: Vec<gtk::gdk::RGBA> = PALETTE
-        .iter()
-        .map(|c| gtk::gdk::RGBA::parse(*c).unwrap())
-        .collect();
-    let refs: Vec<&gtk::gdk::RGBA> = palette.iter().collect();
-    term.set_colors(Some(&fg), Some(&bg), &refs);
-    term.set_scrollback_lines(cfg.scrollback_lines);
     term.set_mouse_autohide(true);
     term.set_font_scale(scale);
-    if let Some(font) = &cfg.font {
-        term.set_font(Some(&gtk::pango::FontDescription::from_string(font)));
-    }
     term.set_hexpand(true);
     term.set_vexpand(true);
+    apply_config(term, cfg);
 }
 
 pub fn apply_config(term: &vte::Terminal, cfg: &Config) {
+    let theme = &cfg.theme;
+    let fg = parse_color(&theme.foreground, crate::state::DEFAULT_FOREGROUND);
+    let mut bg = parse_color(&theme.background, crate::state::DEFAULT_BACKGROUND);
+    bg.set_alpha(cfg.background_opacity.clamp(0.0, 1.0) as f32);
+    let palette: Vec<gtk::gdk::RGBA> = crate::state::DEFAULT_PALETTE
+        .iter()
+        .enumerate()
+        .map(|(i, def)| parse_color(theme.palette.get(i).map_or(*def, String::as_str), def))
+        .collect();
+    let refs: Vec<&gtk::gdk::RGBA> = palette.iter().collect();
+    term.set_colors(Some(&fg), Some(&bg), &refs);
+    term.set_color_cursor(Some(&parse_color(&theme.cursor, crate::state::DEFAULT_FOREGROUND)));
     term.set_scrollback_lines(cfg.scrollback_lines);
     match &cfg.font {
         Some(font) => term.set_font(Some(&gtk::pango::FontDescription::from_string(font))),
@@ -94,13 +153,53 @@ pub fn apply_config(term: &vte::Terminal, cfg: &Config) {
     }
 }
 
-/// vte4 cannot pass NULL envv ("inherit"); an empty slice means an EMPTY
-/// environment, so always pass the full current environment explicitly.
+/// vte merges the supplied envv OVER the parent environment (adding
+/// COLORTERM/VTE_VERSION, and TERM only if missing), so the parent env is
+/// passed explicitly anyway to not depend on that merge. TERM is forced to
+/// describe vte itself, not whatever terminal vmux was launched from (same
+/// for the TERM_PROGRAM identity); TMUX vars are scrubbed from the process
+/// env in main() since envv filtering cannot unset what the merge re-adds.
+///
+/// The command is wrapped in vmux-relay, the PTY shim that watches for
+/// notification OSCs; without it the shell still works, just without
+/// desktop notifications.
 pub fn spawn_argv(term: &vte::Terminal, cwd: &str, argv: &[String]) {
+    const SCRUB: &[&str] = &["TERM", "TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
+    let mut env: Vec<String> = std::env::vars()
+        .filter(|(k, _)| !SCRUB.contains(&k.as_str()))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    env.push("TERM=xterm-256color".into());
+    env.push("TERM_PROGRAM=vmux".into());
+    env.push(concat!("TERM_PROGRAM_VERSION=", env!("CARGO_PKG_VERSION")).to_string());
+    match relay_path() {
+        Some(relay) => {
+            let mut wrapped = Vec::with_capacity(argv.len() + 1);
+            wrapped.push(relay);
+            wrapped.extend(argv.iter().cloned());
+            spawn_with_env(term, cwd, wrapped, env, Some(argv.to_vec()));
+        }
+        None => {
+            feed_line(term, "[vmux] vmux-relay not found; desktop notifications disabled");
+            spawn_with_env(term, cwd, argv.to_vec(), env, None);
+        }
+    }
+}
+
+/// Spawn `argv`; if that fails and `fallback` is set (the bare command, for
+/// when the relay itself is broken), retry without the relay.
+fn spawn_with_env(
+    term: &vte::Terminal,
+    cwd: &str,
+    argv: Vec<String>,
+    env: Vec<String>,
+    fallback: Option<Vec<String>>,
+) {
     let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-    let env: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();
     let env_refs: Vec<&str> = env.iter().map(|s| s.as_str()).collect();
     let tw = term.downgrade();
+    let cwd_owned = cwd.to_string();
+    let env_again = env.clone();
     term.spawn_async(
         vte::PtyFlags::DEFAULT,
         Some(cwd),
@@ -111,19 +210,53 @@ pub fn spawn_argv(term: &vte::Terminal, cwd: &str, argv: &[String]) {
         -1,
         None::<&gio::Cancellable>,
         move |res| {
-            if let Err(e) = res
-                && let Some(term) = tw.upgrade()
-            {
-                feed_line(&term, &format!("[vmux] spawn failed: {e}"));
+            let Err(e) = res else { return };
+            let Some(term) = tw.upgrade() else { return };
+            match fallback {
+                Some(bare) => {
+                    feed_line(
+                        &term,
+                        &format!("[vmux] relay spawn failed ({e}); desktop notifications disabled"),
+                    );
+                    spawn_with_env(&term, &cwd_owned, bare, env_again, None);
+                }
+                None => feed_line(&term, &format!("[vmux] spawn failed: {e}")),
             }
         },
     );
+}
+
+/// The vmux-relay binary: next to the vmux executable (cargo target dir or
+/// install prefix), else on PATH.
+fn relay_path() -> Option<String> {
+    let sibling = std::env::current_exe()
+        .ok()
+        .map(|p| p.with_file_name("vmux-relay"));
+    let path_hits = std::env::var_os("PATH").map(|p| {
+        std::env::split_paths(&p)
+            .map(|d| d.join("vmux-relay"))
+            .collect::<Vec<_>>()
+    });
+    sibling
+        .into_iter()
+        .chain(path_hits.into_iter().flatten())
+        .find(|p| is_executable(p))
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 pub fn feed_line(term: &vte::Terminal, msg: &str) {
     term.feed(format!("\r\n\x1b[2m{msg}\x1b[0m\r\n").as_bytes());
 }
 
+// vte 0.78 deprecates this accessor in favor of termprops; it still works.
+#[allow(deprecated)]
 pub fn cwd_of(term: &vte::Terminal) -> Option<String> {
     let uri = term.current_directory_uri()?;
     let (path, _) = glib::filename_from_uri(&uri).ok()?;

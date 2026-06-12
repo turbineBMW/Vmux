@@ -23,6 +23,18 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     new_tab_btn.set_tooltip_text(Some("New tab in this pane"));
     tab_bar.set_end_action_widget(Some(&new_tab_btn));
 
+    // Escape hatch shown by App::update_sidebar_reveal when the titlebar and
+    // sidebar are both hidden (only on the top-left pane).
+    let reveal_btn = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    reveal_btn.add_css_class("flat");
+    reveal_btn.set_tooltip_text(Some("Show sidebar"));
+    reveal_btn.set_visible(false);
+    tab_bar.set_start_action_widget(Some(&reveal_btn));
+    {
+        let app = app.clone();
+        reveal_btn.connect_clicked(move |_| app.split_view.set_show_sidebar(true));
+    }
+
     let tabs_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     tabs_box.append(&tab_bar);
     tabs_box.append(&tab_view);
@@ -85,6 +97,8 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
                     {
                         term::focus_later(&t);
                     }
+                    // The collapse may have promoted a new top-left pane.
+                    app.update_sidebar_reveal();
                 } else {
                     stack.set_visible_child_name("empty");
                 }
@@ -117,6 +131,29 @@ pub fn tab_view_of(pane: &gtk::Widget) -> Option<adw::TabView> {
     None
 }
 
+fn tab_bar_of(pane: &gtk::Widget) -> Option<adw::TabBar> {
+    let stack = pane.downcast_ref::<gtk::Stack>()?;
+    let tabs_box = stack.child_by_name("tabs")?;
+    let mut child = tabs_box.first_child();
+    while let Some(c) = child {
+        if let Ok(bar) = c.clone().downcast::<adw::TabBar>() {
+            return Some(bar);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+/// Show/hide this pane's "show sidebar" button (the tab bar's start action
+/// widget).
+pub fn set_sidebar_reveal_visible(pane: &gtk::Widget, visible: bool) {
+    if let Some(bar) = tab_bar_of(pane)
+        && let Some(btn) = bar.start_action_widget()
+    {
+        btn.set_visible(visible);
+    }
+}
+
 pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<String>) {
     let Some(view) = tab_view_of(pane.upcast_ref()) else {
         return;
@@ -130,6 +167,9 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
     page.set_title(&state::display_name(&cwd));
 
     if let Some(t) = splits::first_terminal_in(leaf.upcast_ref()) {
+        // vte 0.78 deprecates the title/cwd accessors in favor of termprops;
+        // the old signals still work, so migrating them is its own change.
+        #[allow(deprecated)]
         {
             let pw = page.downgrade();
             t.connect_window_title_changed(move |term| {
@@ -138,6 +178,7 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                 }
             });
         }
+        #[allow(deprecated)]
         {
             let pw = page.downgrade();
             let app = app.clone();
@@ -172,6 +213,7 @@ pub fn close_tab_of(terminal: &vte::Terminal) {
     }
 }
 
+#[allow(deprecated)] // window_title: see the connect_* note in new_tab
 fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
     let title = terminal
         .window_title()
