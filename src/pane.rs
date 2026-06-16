@@ -81,6 +81,7 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     {
         let app = app.clone();
         let stack = stack.clone();
+        let zone = zone.clone();
         tab_view.connect_page_detached(move |view, _, _| {
             if view.root().is_none() {
                 return; // pane already being torn down
@@ -99,6 +100,11 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
                     }
                     // The collapse may have promoted a new top-left pane.
                     app.update_sidebar_reveal();
+                } else if let Some(z) = zone.upgrade() {
+                    // Last tab of the zone's only pane: drop the zone itself
+                    // (remove_zone focuses the next one, or recreates "main").
+                    app.remove_zone(&z);
+                    return;
                 } else {
                     stack.set_visible_child_name("empty");
                 }

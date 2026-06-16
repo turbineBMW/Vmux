@@ -169,6 +169,9 @@ fn replace_in_slot(slot: &gtk::Widget, old: &gtk::Widget, new: &gtk::Widget) {
     }
 }
 
+/// Fraction of a split's extent that one grow/shrink keypress shifts the divider.
+pub const RESIZE_STEP: f64 = 0.05;
+
 /// The divider ratio is cached on the paned itself (widget name slot) so a
 /// snapshot never depends on the paned being allocated (hidden zones).
 pub fn set_cached_ratio(paned: &gtk::Paned, ratio: f64) {

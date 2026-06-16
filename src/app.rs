@@ -89,6 +89,8 @@ impl App {
             "focus-pane-right" => self.focus_pane_directional(splits::Direction::Right),
             "focus-pane-up" => self.focus_pane_directional(splits::Direction::Up),
             "focus-pane-down" => self.focus_pane_directional(splits::Direction::Down),
+            "grow-pane" => self.resize_focused(true),
+            "shrink-pane" => self.resize_focused(false),
             "next-tab" => self.cycle_tab(true),
             "prev-tab" => self.cycle_tab(false),
             "new-zone" => {
@@ -464,6 +466,34 @@ impl App {
         {
             self.focus_pane(&target);
         }
+        glib::Propagation::Stop
+    }
+
+    /// Grow or shrink the focused pane within its immediate split by moving the
+    /// enclosing divider one step. No-op when the focused pane isn't split (its
+    /// parent is the zone's Bin slot, not a Paned). The move fires
+    /// `connect_position_notify`, which refreshes the cached ratio and saves.
+    fn resize_focused(self: &Rc<Self>, grow: bool) -> glib::Propagation {
+        let Some(zone) = self.active_zone() else {
+            return glib::Propagation::Proceed;
+        };
+        let Some(pane) = self.focused_pane(&zone) else {
+            return glib::Propagation::Stop;
+        };
+        let pane_w: gtk::Widget = pane.upcast();
+        let Some(paned) = pane_w.parent().and_downcast::<gtk::Paned>() else {
+            return glib::Propagation::Stop; // only pane in the zone — nothing to resize
+        };
+        let size = splits::paned_size(&paned);
+        if size <= 1 {
+            return glib::Propagation::Stop;
+        }
+        let step = ((size as f64 * splits::RESIZE_STEP) as i32).max(1);
+        // position is the start child's extent: growing the start child pushes
+        // the divider toward the end, growing the end child pulls it back.
+        let is_start = paned.start_child().as_ref() == Some(&pane_w);
+        let delta = if grow == is_start { step } else { -step };
+        paned.set_position((paned.position() + delta).clamp(0, size));
         glib::Propagation::Stop
     }
 

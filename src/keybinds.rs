@@ -20,6 +20,8 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("focus-pane-right", "Focus Pane Right", "<Control><Alt>Right"),
     ("focus-pane-up", "Focus Pane Up", "<Control><Alt>Up"),
     ("focus-pane-down", "Focus Pane Down", "<Control><Alt>Down"),
+    ("grow-pane", "Grow Pane", "<Control><Shift>equal"),
+    ("shrink-pane", "Shrink Pane", "<Control><Shift>minus"),
     ("next-tab", "Next Tab", "<Control>Page_Down"),
     ("prev-tab", "Previous Tab", "<Control>Page_Up"),
     ("new-zone", "New Zone", "<Control><Shift>n"),
