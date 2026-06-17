@@ -198,6 +198,17 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                 app.schedule_save();
             });
         }
+        {
+            let pw = page.downgrade();
+            t.connect_termprop_changed(
+                Some(vmux::osc_scan::FGPROC_TERMPROP_NAME),
+                move |term, _name| {
+                    if let Some(page) = pw.upgrade() {
+                        refresh_title(term, &page);
+                    }
+                },
+            );
+        }
         term::focus_later(&t);
     }
     view.set_selected_page(&page);
@@ -225,7 +236,26 @@ fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
         .window_title()
         .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
+        .or_else(|| fg_command(terminal))
         .or_else(|| term::cwd_of(terminal).map(|c| state::display_name(&c)))
+        .or_else(|| {
+            // Shells without OSC 7 (e.g. bash) report no live cwd, so once a
+            // finished command's name clears, fall back to the cwd vmux cached
+            // on the page — otherwise the title would stay stuck on the
+            // command instead of reverting to the directory.
+            page.keyword()
+                .filter(|k| !k.is_empty())
+                .map(|k| state::display_name(&k))
+        })
         .unwrap_or_else(|| page.title().to_string());
     page.set_title(&title);
+}
+
+/// The foreground command vmux-relay last reported via the fgproc termprop,
+/// or None when unset/empty (the shell itself is in front).
+fn fg_command(terminal: &vte::Terminal) -> Option<String> {
+    let data = terminal.termprop_data(vmux::osc_scan::FGPROC_TERMPROP_NAME);
+    let name = String::from_utf8_lossy(&data);
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }

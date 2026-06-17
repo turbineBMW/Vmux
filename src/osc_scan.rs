@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 /// "vte.ext." prefix and at least four dot-separated components.
 pub const TERMPROP_NAME: &str = "vte.ext.vmux.notify";
 
+/// The termprop carrying the inner pty's current foreground command name
+/// (empty when the shell itself is in the foreground). vmux falls back to it
+/// for the tab title when no program set an explicit OSC window title.
+pub const FGPROC_TERMPROP_NAME: &str = "vte.ext.vmux.fgproc";
+
 /// OSC payloads beyond this are dropped (passthrough is unaffected).
 const PAYLOAD_CAP: usize = 8192;
 const TITLE_MAX_CHARS: usize = 128;
@@ -57,10 +62,22 @@ pub fn encode_termprop(n: &Notification, seq: u64) -> Vec<u8> {
         body: &n.body,
     })
     .unwrap_or_default();
-    let b64 = base64_encode(json.as_bytes());
-    let mut out = Vec::with_capacity(b64.len() + TERMPROP_NAME.len() + 16);
+    osc666_termprop(TERMPROP_NAME, json.as_bytes())
+}
+
+/// The vte termprop OSC carrying the current foreground command (empty value
+/// clears it): `OSC 666 ; vte.ext.vmux.fgproc=<base64(cmd)> ST`.
+pub fn encode_fgproc_termprop(cmd: &str) -> Vec<u8> {
+    osc666_termprop(FGPROC_TERMPROP_NAME, cmd.as_bytes())
+}
+
+/// Frame one termprop OSC: `OSC 666 ; name=<base64(value)> ST`. Always
+/// ST-terminated — vte rejects a BEL-terminated termprop OSC.
+fn osc666_termprop(name: &str, value: &[u8]) -> Vec<u8> {
+    let b64 = base64_encode(value);
+    let mut out = Vec::with_capacity(b64.len() + name.len() + 16);
     out.extend_from_slice(b"\x1b]666;");
-    out.extend_from_slice(TERMPROP_NAME.as_bytes());
+    out.extend_from_slice(name.as_bytes());
     out.push(b'=');
     out.extend_from_slice(b64.as_bytes());
     out.extend_from_slice(b"\x1b\\");
@@ -184,6 +201,13 @@ impl Scanner {
                 },
             };
         }
+    }
+
+    /// True when the scanner sits between sequences (canonical Ground state) —
+    /// the only point at which splicing an out-of-band OSC into the forwarded
+    /// stream cannot land in the middle of another escape sequence.
+    pub fn at_ground(&self) -> bool {
+        matches!(self.state, State::Ground)
     }
 
     fn finish(&mut self, end: usize, emit: &mut dyn FnMut(usize, Notification)) {

@@ -15,7 +15,7 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicI32, Ordering};
-use vmux::osc_scan::{encode_termprop, Scanner};
+use vmux::osc_scan::{encode_fgproc_termprop, encode_termprop, Scanner};
 
 /// Self-pipe write end for the SIGWINCH/SIGCHLD handler.
 static SELF_PIPE_W: AtomicI32 = AtomicI32::new(-1);
@@ -171,6 +171,25 @@ fn write_fd(fd: i32, buf: &[u8]) -> IoRes {
     }
 }
 
+/// Basename of the foreground process group's command on the inner pty, for
+/// use as a tab title. Prefers /proc/<pgid>/cmdline (untruncated argv[0]) and
+/// falls back to /proc/<pgid>/comm; None on any read failure (caller retries).
+fn fg_name(pgid: libc::pid_t) -> Option<String> {
+    if let Ok(cmdline) = std::fs::read(format!("/proc/{pgid}/cmdline")) {
+        let arg0 = cmdline.split(|&b| b == 0).next().unwrap_or(&[]);
+        if !arg0.is_empty() {
+            let s = String::from_utf8_lossy(arg0);
+            let base = s.rsplit('/').next().unwrap_or("");
+            if !base.is_empty() {
+                return Some(base.to_string());
+            }
+        }
+    }
+    let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;
+    let comm = comm.trim_end_matches('\n');
+    (!comm.is_empty()).then(|| comm.to_string())
+}
+
 /// The relay core: a poll loop over stdin (vte→shell), the inner pty master
 /// (both directions) and stdout (shell→vte), plus the self-pipe.
 ///
@@ -190,6 +209,15 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     let mut stdin_open = true;
     let mut status: Option<libc::c_int> = None;
     let mut drain_ticks = 0u32;
+    // Foreground-command tracking on the inner pty (for tab titles). last_sent
+    // starts as "" (idle) so sitting at the shell prompt emits nothing.
+    let mut last_pgid: libc::pid_t = -1;
+    let mut last_sent: Option<String> = Some(String::new());
+    let mut pending_fg: Option<String> = None;
+    // Short poll ticks scheduled after user input, to catch a silent command
+    // (e.g. `sleep`) taking the foreground without producing output. Lapses
+    // back to a blocking wait when idle, so there are no wakeups at rest.
+    let mut poll_ticks: u32 = 0;
 
     'outer: loop {
         let mut fds: Vec<libc::pollfd> = Vec::with_capacity(4);
@@ -209,8 +237,16 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
         let stdin_idx = (stdin_open && in_len == 0).then(|| push(0, libc::POLLIN));
         let stdout_idx = (out_start < out.len()).then(|| push(1, libc::POLLOUT));
 
-        // Once the shell is reaped, only drain what the pty still holds.
-        let timeout: libc::c_int = if status.is_some() { 50 } else { -1 };
+        // Once the shell is reaped, only drain what the pty still holds. While
+        // running, block unless a recent keystroke armed the foreground poll
+        // (then tick every 120ms until it lapses).
+        let timeout: libc::c_int = if status.is_some() {
+            50
+        } else if poll_ticks > 0 || pending_fg.is_some() {
+            120
+        } else {
+            -1
+        };
         let r = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
         if r < 0 {
             if errno() == libc::EINTR {
@@ -219,11 +255,16 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
             break;
         }
         if r == 0 {
-            drain_ticks += 1;
-            if out_start >= out.len() || drain_ticks > 10 {
-                break;
+            if status.is_some() {
+                drain_ticks += 1;
+                if out_start >= out.len() || drain_ticks > 10 {
+                    break;
+                }
+                continue;
             }
-            continue;
+            // Running: a foreground-poll tick. Fall through to the fg check
+            // below; no fds are ready, so the revents handlers are no-ops.
+            poll_ticks = poll_ticks.saturating_sub(1);
         }
 
         if fds[pipe_idx].revents != 0 {
@@ -304,6 +345,9 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                 IoRes::Done(n) => {
                     in_start = 0;
                     in_len = n;
+                    // A command may be about to take the foreground silently;
+                    // poll briefly so its name reaches the tab title.
+                    poll_ticks = 8;
                 }
                 // vte teardown arrives as SIGHUP (default death) before this
                 // is ever seen; EOF here serves pipe-driven manual runs.
@@ -320,6 +364,37 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                 IoRes::Done(n) => out_start += n,
                 IoRes::Again => {}
                 IoRes::Closed => break 'outer,
+            }
+        }
+
+        // Tab-title hint: report the inner pty's foreground command (empty =
+        // the shell itself is in front). The /proc read happens only when the
+        // pgid changes; the termprop is queued and spliced into the output at
+        // the next sequence boundary, so it can never split another sequence.
+        if status.is_none() {
+            let pg = unsafe { libc::tcgetpgrp(master) };
+            if pg != last_pgid {
+                let name = if pg == child { Some(String::new()) } else { fg_name(pg) };
+                if let Some(name) = name {
+                    last_pgid = pg;
+                    if last_sent.as_deref() != Some(name.as_str()) {
+                        pending_fg = Some(name);
+                    }
+                }
+            }
+            // Flush at any sequence boundary. If the output buffer is already
+            // drained, reset it; otherwise append after the queued bytes —
+            // still a boundary, since at_ground reflects the end of what is
+            // queued, so the OSC can't split another sequence.
+            if scanner.at_ground()
+                && let Some(name) = pending_fg.take()
+            {
+                if out_start >= out.len() {
+                    out.clear();
+                    out_start = 0;
+                }
+                out.extend_from_slice(&encode_fgproc_termprop(&name));
+                last_sent = Some(name);
             }
         }
     }

@@ -14,20 +14,27 @@ pub fn parse_color(s: &str, fallback: &str) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::parse(s).unwrap_or_else(|_| gtk::gdk::RGBA::parse(fallback).unwrap())
 }
 
-/// Register the custom termprop vmux-relay uses to deliver desktop
-/// notifications (the safe vte4 crate does not wrap the install call).
-/// vte requires this to run before the first vte::Terminal exists.
+/// Register the custom termprops vmux-relay uses to talk back to vmux (the
+/// safe vte4 crate does not wrap the install call). vte requires these to run
+/// before the first vte::Terminal exists.
 pub fn install_notify_termprop() {
-    let name = std::ffi::CString::new(vmux::osc_scan::TERMPROP_NAME).unwrap();
-    let id = unsafe {
-        vte::ffi::vte_install_termprop(
-            name.as_ptr(),
-            vte::ffi::VTE_PROPERTY_DATA,
-            vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL,
-        )
-    };
+    // Ephemeral: the notification value is only readable inside its handler.
+    install_termprop(vmux::osc_scan::TERMPROP_NAME, vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL);
+}
+
+/// Register the termprop carrying the foreground command for tab titles.
+/// Non-ephemeral so refresh_title can read it on demand and vte de-dups
+/// unchanged values; like the notify prop it must precede the first terminal.
+pub fn install_fgproc_termprop() {
+    install_termprop(vmux::osc_scan::FGPROC_TERMPROP_NAME, 0);
+}
+
+fn install_termprop(name: &str, flags: u32) {
+    let cname = std::ffi::CString::new(name).unwrap();
+    let id =
+        unsafe { vte::ffi::vte_install_termprop(cname.as_ptr(), vte::ffi::VTE_PROPERTY_DATA, flags) };
     if id < 0 {
-        eprintln!("vmux: failed to install the notification termprop");
+        eprintln!("vmux: failed to install termprop {name}");
     }
 }
 

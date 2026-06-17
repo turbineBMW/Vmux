@@ -61,6 +61,7 @@ fn main() -> glib::ExitCode {
     }
     // Must precede the first vte::Terminal (vte rule for termprop installs).
     term::install_notify_termprop();
+    term::install_fgproc_termprop();
     let application = adw::Application::builder().application_id(APP_ID).build();
     application.connect_activate(|gtk_app| {
         if let Some(existing) = gtk_app.windows().first() {
