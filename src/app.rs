@@ -1,5 +1,5 @@
 use crate::zone::Zone;
-use crate::{keybinds, pane, splits, state, term, text_bindings, window};
+use crate::{git, keybinds, pane, splits, state, term, text_bindings, window};
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use gtk::prelude::*;
@@ -71,6 +71,7 @@ pub fn build(gtk_app: &adw::Application) {
         app.append_zone(zs);
     }
     app.select_zone(st.active_zone);
+    app.start_git_polling();
     app.save_now();
     app.window.present();
 }
@@ -183,6 +184,7 @@ impl App {
         self.listbox.append(&zone.row);
         self.zones.borrow_mut().push(zone.clone());
         self.update_sidebar_reveal();
+        Self::refresh_zone_git(&zone);
         zone
     }
 
@@ -634,6 +636,56 @@ impl App {
             if size > 1 {
                 splits::set_cached_ratio(p, p.position() as f64 / size as f64);
                 app.schedule_save();
+            }
+        });
+    }
+
+    // ----- git status -------------------------------------------------------
+
+    /// Keep each zone's secondary line in sync with its directory's git status:
+    /// refresh now, on a 3s timer while the window is focused, and whenever the
+    /// window regains focus. Gating on focus avoids churn while in the
+    /// background; the focus-in handler makes stats fresh the moment you return.
+    pub fn start_git_polling(self: &Rc<Self>) {
+        self.refresh_all_git();
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+            let Some(app) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if app.window.is_active() {
+                app.refresh_all_git();
+            }
+            glib::ControlFlow::Continue
+        });
+        let weak = Rc::downgrade(self);
+        self.window.connect_is_active_notify(move |w| {
+            if w.is_active()
+                && let Some(app) = weak.upgrade()
+            {
+                app.refresh_all_git();
+            }
+        });
+    }
+
+    fn refresh_all_git(&self) {
+        for zone in self.zones.borrow().iter() {
+            Self::refresh_zone_git(zone);
+        }
+    }
+
+    /// Recompute one zone's git summary off the main loop and update its
+    /// secondary label, falling back to the directory basename outside a repo.
+    fn refresh_zone_git(zone: &Rc<Zone>) {
+        let cwd = zone.cwd.clone();
+        let label = zone.path_label.clone();
+        glib::spawn_future_local(async move {
+            let text = match git::run_summary(&cwd).await {
+                Some(summary) => git::format_summary(&summary),
+                None => state::display_name(&cwd),
+            };
+            if label.text().as_str() != text {
+                label.set_label(&text);
             }
         });
     }

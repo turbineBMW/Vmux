@@ -1,5 +1,6 @@
 mod app;
 mod appearance;
+mod git;
 mod keybinds;
 mod open_path_dialog;
 mod pane;

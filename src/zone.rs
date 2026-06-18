@@ -18,6 +18,8 @@ pub struct Zone {
     pub last_focused: glib::WeakRef<vte::Terminal>,
     pub row: gtk::ListBoxRow,
     pub name_label: gtk::Label,
+    /// Secondary line: directory basename, or live git status once refreshed.
+    pub path_label: gtk::Label,
     pub attention: gtk::Image,
 }
 
@@ -59,6 +61,7 @@ impl Zone {
             last_focused: glib::WeakRef::new(),
             row,
             name_label,
+            path_label,
             attention,
         });
 
