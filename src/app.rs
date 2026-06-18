@@ -251,10 +251,19 @@ impl App {
         if cur < 0 || new < 0 || new >= self.zones.borrow().len() as i32 {
             return glib::Propagation::Stop;
         }
-        self.zones.borrow_mut().swap(cur as usize, new as usize);
-        self.listbox.remove(&row);
-        self.listbox.insert(&row, new);
-        self.listbox.select_row(Some(&row));
+        let (cur, new) = (cur as usize, new as usize);
+        // Reorder by moving the NEIGHBOR row past the selected one, not the
+        // selected row itself. Removing the selected row from the ListBox clears
+        // the selection, and a follow-up select_row() on the re-inserted row does
+        // not take — leaving nothing selected, which broke every subsequent
+        // move/cycle (they read selected_row().index()). Moves are always between
+        // adjacent slots, so swapping the untouched neighbor to the other side of
+        // the selected row produces the same order while preserving the selection
+        // and the selected row's (now-shifted) index.
+        let neighbor = self.zones.borrow()[new].row.clone();
+        self.zones.borrow_mut().swap(cur, new);
+        self.listbox.remove(&neighbor);
+        self.listbox.insert(&neighbor, cur as i32);
         self.schedule_save();
         glib::Propagation::Stop
     }
