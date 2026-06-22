@@ -1,5 +1,5 @@
 use crate::zone::Zone;
-use crate::{git, keybinds, pane, splits, state, term, text_bindings, window};
+use crate::{git, keybinds, pane, splits, state, style, term, text_bindings, window};
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use gtk::prelude::*;
@@ -25,6 +25,10 @@ pub struct App {
     next_zone_id: Cell<u64>,
     shortcut_ctl: RefCell<Option<gtk::ShortcutController>>,
     bindings_monitor: RefCell<Option<gio::FileMonitor>>,
+    /// User CSS from style.css, applied at the USER priority so it overrides
+    /// both the Adwaita theme and vmux's built-in styles.
+    style_provider: gtk::CssProvider,
+    style_monitor: RefCell<Option<gio::FileMonitor>>,
 }
 
 pub fn build(gtk_app: &adw::Application) {
@@ -45,6 +49,8 @@ pub fn build(gtk_app: &adw::Application) {
         next_zone_id: Cell::new(1),
         shortcut_ctl: RefCell::new(None),
         bindings_monitor: RefCell::new(None),
+        style_provider: gtk::CssProvider::new(),
+        style_monitor: RefCell::new(None),
     });
     window::wire_chrome(&app, &chrome);
     // Notification clicks land here: switch to the originating zone and
@@ -66,7 +72,9 @@ pub fn build(gtk_app: &adw::Application) {
     app.sync_window_transparency();
     app.sync_titlebar();
     app.reinstall_shortcuts();
+    app.install_user_css();
     app.watch_text_bindings();
+    app.watch_user_css();
     for zs in &st.zones {
         app.append_zone(zs);
     }
@@ -170,6 +178,57 @@ impl App {
             }
             Err(e) => {
                 eprintln!("vmux: cannot watch {}: {e}", text_bindings::path().display());
+            }
+        }
+    }
+
+    /// Register the style.css provider on the display at the USER priority
+    /// (above the THEME and APPLICATION providers, so user rules win), then
+    /// load the file's current contents.
+    fn install_user_css(self: &Rc<Self>) {
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &self.style_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_USER,
+            );
+        }
+        // Surface parse errors to the log rather than silently dropping the
+        // offending rule (GTK keeps applying the valid remainder).
+        self.style_provider.connect_parsing_error(|_, section, err| {
+            eprintln!(
+                "vmux: style.css line {}: {err}",
+                section.start_location().lines() + 1
+            );
+        });
+        self.reload_user_css();
+    }
+
+    /// Re-read style.css into the provider, restyling every widget live.
+    fn reload_user_css(&self) {
+        self.style_provider.load_from_data(&style::load());
+    }
+
+    /// Hot-reload style.css whenever it changes on disk (mirrors the
+    /// bindings.conf watcher; Deleted re-seeds the template via load()).
+    fn watch_user_css(self: &Rc<Self>) {
+        let file = gio::File::for_path(style::path());
+        match file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
+            Ok(monitor) => {
+                let app = self.clone();
+                monitor.connect_changed(move |_, _, _, event| {
+                    use gio::FileMonitorEvent as E;
+                    if matches!(
+                        event,
+                        E::ChangesDoneHint | E::Renamed | E::MovedIn | E::Created | E::Deleted
+                    ) {
+                        app.reload_user_css();
+                    }
+                });
+                *self.style_monitor.borrow_mut() = Some(monitor);
+            }
+            Err(e) => {
+                eprintln!("vmux: cannot watch {}: {e}", style::path().display());
             }
         }
     }

@@ -149,7 +149,47 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
         }
     });
 
+    // Recoloring the GTK chrome itself is unbounded, so it lives in a
+    // hand-edited, live-reloaded style.css (see crate::style) rather than a
+    // dedicated widget per property. Surface the file here for discoverability.
+    let custom = adw::PreferencesGroup::new();
+    custom.set_title("Window Theme");
+    custom.set_description(Some(
+        "Recolor the window chrome to match your terminal by editing style.css. \
+         It is plain GTK/libadwaita CSS and applies live as you save.",
+    ));
+    let css_path = crate::style::path().display().to_string();
+    let css_row = adw::ActionRow::builder()
+        .title("style.css")
+        .subtitle(&css_path)
+        .activatable(true)
+        .build();
+    let open = gtk::Button::with_label("Open");
+    open.set_valign(gtk::Align::Center);
+    open.add_css_class("flat");
+    let launch = move |widget: &gtk::Widget| {
+        // load() seeds the template on first run, so the editor always opens a
+        // real, documented file rather than creating a blank one.
+        let _ = crate::style::load();
+        let file = gtk::gio::File::for_path(crate::style::path());
+        let launcher = gtk::FileLauncher::new(Some(&file));
+        let parent = widget.root().and_downcast::<gtk::Window>();
+        launcher.launch(parent.as_ref(), gtk::gio::Cancellable::NONE, |res| {
+            if let Err(e) = res {
+                eprintln!("vmux: cannot open style.css: {e}");
+            }
+        });
+    };
+    {
+        let launch = launch.clone();
+        open.connect_clicked(move |b| launch(b.upcast_ref()));
+    }
+    css_row.connect_activated(move |row| launch(row.upcast_ref()));
+    css_row.add_suffix(&open);
+    custom.add(&css_row);
+
     page.add(&colors);
     page.add(&palette);
+    page.add(&custom);
     page
 }

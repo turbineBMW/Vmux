@@ -6,6 +6,7 @@ mod open_path_dialog;
 mod pane;
 mod splits;
 mod state;
+mod style;
 mod term;
 mod text_bindings;
 mod window;
