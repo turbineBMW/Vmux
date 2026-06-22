@@ -40,8 +40,19 @@ pub const TEMPLATE: &str = r#"/* vmux GTK theme overrides.
  * You can also target vmux's own widgets directly. Useful selectors:
  *
  *   .zone-row    - sidebar zone entries, e.g.  .zone-row { padding: 8px 10px; }
- *   .zone-path   - the per-zone secondary line, e.g.  .zone-path { opacity: 0.7; }
+ *   .zone-path   - the per-zone secondary line, e.g.  .zone-path { font-size: 0.9em; }
  *   tabbar tab   - pane tab labels, e.g.  tabbar tab { font-weight: bold; }
+ *
+ * The secondary line colors git status. Recolor any piece (defaults shown):
+ *
+ *   .zone-path .git-added       { color: #26a269; }   files added
+ *   .zone-path .git-modified    { color: #e9ad0c; }   files modified
+ *   .zone-path .git-deleted     { color: #c01c28; }   files deleted
+ *   .zone-path .git-lines-added { color: #26a269; }   lines inserted
+ *   .zone-path .git-lines-del   { color: #c01c28; }   lines deleted
+ *   .zone-path .git-ahead       { color: #2a7bde; }   unpushed commits
+ *   .zone-path .git-clean       { opacity: 0.55; }    the clean (check) marker
+ *   .zone-path .zone-path-dir   { opacity: 0.55; }    directory name (no repo)
  */
 "#;
 

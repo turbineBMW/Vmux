@@ -118,6 +118,72 @@ pub fn format_summary(s: &GitSummary) -> String {
     }
 }
 
+/// A colorizable piece of the rendered summary: display text — including any
+/// leading separator spaces, so concatenating every segment's text reproduces
+/// [`format_summary`] exactly — plus the CSS class the sidebar colors it with.
+pub struct Segment {
+    pub text: String,
+    pub class: &'static str,
+}
+
+/// The summary as colorizable [`Segment`]s, mirroring [`format_summary`]'s
+/// grouping and spacing but tagging each token with a CSS class so the sidebar
+/// can color it independently. A clean repo yields a single `✓` (`git-clean`).
+pub fn summary_segments(s: &GitSummary) -> Vec<Segment> {
+    let mut groups: Vec<Vec<(String, &'static str)>> = Vec::new();
+
+    let mut files = Vec::new();
+    if s.added > 0 {
+        files.push((format!("+{}", s.added), "git-added"));
+    }
+    if s.modified > 0 {
+        files.push((format!("~{}", s.modified), "git-modified"));
+    }
+    if s.deleted > 0 {
+        files.push((format!("-{}", s.deleted), "git-deleted"));
+    }
+    if !files.is_empty() {
+        groups.push(files);
+    }
+
+    if s.insertions > 0 || s.deletions > 0 {
+        groups.push(vec![
+            (format!("+{}", s.insertions), "git-lines-added"),
+            (format!("-{}", s.deletions), "git-lines-del"),
+        ]);
+    }
+
+    if s.ahead > 0 {
+        groups.push(vec![(format!("↑{}", s.ahead), "git-ahead")]);
+    }
+
+    if groups.is_empty() {
+        return vec![Segment {
+            text: "✓".to_string(),
+            class: "git-clean",
+        }];
+    }
+
+    // Flatten, re-inserting format_summary's separators (two spaces between
+    // groups, one within a group) as leading whitespace on each token so the
+    // concatenated segments round-trip to the same string.
+    let mut segments = Vec::new();
+    for (gi, group) in groups.into_iter().enumerate() {
+        for (si, (token, class)) in group.into_iter().enumerate() {
+            let sep = match (gi, si) {
+                (0, 0) => "",
+                (_, 0) => "  ",
+                _ => " ",
+            };
+            segments.push(Segment {
+                text: format!("{sep}{token}"),
+                class,
+            });
+        }
+    }
+    segments
+}
+
 /// Run `git -C <cwd> <args...>` and return its stdout, or None if git could not
 /// be spawned. stderr is silenced (e.g. the "not a git repository" message).
 async fn git_output(cwd: &str, args: &[&str]) -> Option<String> {
@@ -253,5 +319,41 @@ mod tests {
             ahead: 2,
         };
         assert_eq!(format_summary(&s), "↑2");
+    }
+
+    /// The colored segments must reproduce format_summary's exact text (spacing
+    /// included) when concatenated, so coloring never shifts the layout.
+    fn joined(s: &GitSummary) -> String {
+        summary_segments(s).iter().map(|seg| seg.text.as_str()).collect()
+    }
+
+    #[test]
+    fn segments_round_trip_to_format() {
+        for s in [
+            GitSummary { added: 2, modified: 5, deleted: 1, insertions: 128, deletions: 34, ahead: 3 },
+            GitSummary { added: 0, modified: 1, deleted: 0, insertions: 4, deletions: 0, ahead: 0 },
+            GitSummary { added: 0, modified: 0, deleted: 0, insertions: 0, deletions: 0, ahead: 2 },
+        ] {
+            assert_eq!(joined(&s), format_summary(&s));
+        }
+    }
+
+    #[test]
+    fn segments_tag_each_token_with_a_class() {
+        let s = GitSummary { added: 2, modified: 5, deleted: 1, insertions: 128, deletions: 34, ahead: 3 };
+        let classes: Vec<&str> = summary_segments(&s).iter().map(|seg| seg.class).collect();
+        assert_eq!(
+            classes,
+            ["git-added", "git-modified", "git-deleted", "git-lines-added", "git-lines-del", "git-ahead"]
+        );
+    }
+
+    #[test]
+    fn segments_clean_repo_is_single_check() {
+        let s = GitSummary { added: 0, modified: 0, deleted: 0, insertions: 0, deletions: 0, ahead: 0 };
+        let segs = summary_segments(&s);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "✓");
+        assert_eq!(segs[0].class, "git-clean");
     }
 }

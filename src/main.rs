@@ -21,7 +21,17 @@ const APP_ID: &str = "dev.vmux.Vmux";
 
 const CSS: &str = "
 .attention-dot { color: @accent_bg_color; }
-.zone-path { font-size: 0.85em; opacity: 0.55; }
+.zone-path { font-size: 0.85em; }
+/* Secondary line: dim the directory name and the clean marker; color each
+   git-status token. Override any of these in ~/.config/vmux/style.css. */
+.zone-path .zone-path-dir,
+.zone-path .git-clean        { opacity: 0.55; }
+.zone-path .git-added,
+.zone-path .git-lines-added  { color: #26a269; }
+.zone-path .git-modified     { color: #e9ad0c; }
+.zone-path .git-deleted,
+.zone-path .git-lines-del    { color: #c01c28; }
+.zone-path .git-ahead        { color: #2a7bde; }
 .zone-row { padding: 6px 8px; }
 window.vmux-transparent { background-color: transparent; }
 /* The flat headerbar relies on the window background removed above. Paint the
@@ -60,6 +70,16 @@ fn main() -> glib::ExitCode {
     unsafe {
         std::env::remove_var("TMUX");
         std::env::remove_var("TMUX_PANE");
+    }
+    // Force integer-scale rendering on fractional-scaled displays so diagonal
+    // glyphs (powerline separators) don't stair-step: GTK rasterizes at 2× and
+    // the compositor downscales, which supersamples the glyphs (matching what
+    // foot does). Must run before GTK reads GDK_SCALE; an explicit GDK_SCALE in
+    // the environment always wins. See Config::force_integer_scale.
+    if state::load().config.force_integer_scale && std::env::var_os("GDK_SCALE").is_none() {
+        unsafe {
+            std::env::set_var("GDK_SCALE", "2");
+        }
     }
     // Must precede the first vte::Terminal (vte rule for termprop installs).
     term::install_notify_termprop();

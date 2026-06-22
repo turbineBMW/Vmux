@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::{pane, splits, state};
+use crate::{git, pane, splits, state};
 use gtk4 as gtk;
 use gtk4::glib;
 use gtk::prelude::*;
@@ -18,8 +18,12 @@ pub struct Zone {
     pub last_focused: glib::WeakRef<vte::Terminal>,
     pub row: gtk::ListBoxRow,
     pub name_label: gtk::Label,
-    /// Secondary line: directory basename, or live git status once refreshed.
-    pub path_label: gtk::Label,
+    /// Secondary line: a directory basename label, or one colored label per
+    /// git-status token once refreshed. See [`populate_path_box`].
+    pub path_box: gtk::Box,
+    /// Plain-text form of what `path_box` currently shows, so a refresh that
+    /// computes the same string can skip rebuilding the labels.
+    pub git_text: Rc<RefCell<String>>,
     pub attention: gtk::Image,
 }
 
@@ -36,13 +40,15 @@ impl Zone {
         // Sidebar row.
         let name_label = gtk::Label::new(Some(&zs.name));
         name_label.set_xalign(0.0);
-        let path_label = gtk::Label::new(Some(&state::display_name(&zs.cwd)));
-        path_label.set_xalign(0.0);
-        path_label.add_css_class("zone-path");
+        let dir = state::display_name(&zs.cwd);
+        // Token separators are baked into each label's text, so spacing is 0.
+        let path_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        path_box.add_css_class("zone-path");
+        populate_path_box(&path_box, None, &dir);
         let text_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
         text_box.set_hexpand(true);
         text_box.append(&name_label);
-        text_box.append(&path_label);
+        text_box.append(&path_box);
         let attention = gtk::Image::from_icon_name("media-record-symbolic");
         attention.add_css_class("attention-dot");
         attention.set_visible(false);
@@ -61,7 +67,8 @@ impl Zone {
             last_focused: glib::WeakRef::new(),
             row,
             name_label,
-            path_label,
+            path_box,
+            git_text: Rc::new(RefCell::new(dir)),
             attention,
         });
 
@@ -94,6 +101,31 @@ impl Zone {
             cwd: self.cwd.clone(),
             root: Some(root),
             tabs: Vec::new(),
+        }
+    }
+}
+
+/// Rebuild the secondary line's contents, replacing any existing children.
+/// Inside a repo (`Some`), one label per [`git::Segment`] carries that token's
+/// color class; outside one (`None`), a single dimmed label shows `dir`.
+pub fn populate_path_box(path_box: &gtk::Box, summary: Option<&git::GitSummary>, dir: &str) {
+    while let Some(child) = path_box.first_child() {
+        path_box.remove(&child);
+    }
+    match summary {
+        Some(summary) => {
+            for seg in git::summary_segments(summary) {
+                let label = gtk::Label::new(Some(&seg.text));
+                label.set_xalign(0.0);
+                label.add_css_class(seg.class);
+                path_box.append(&label);
+            }
+        }
+        None => {
+            let label = gtk::Label::new(Some(dir));
+            label.set_xalign(0.0);
+            label.add_css_class("zone-path-dir");
+            path_box.append(&label);
         }
     }
 }

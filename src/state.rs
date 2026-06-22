@@ -41,6 +41,15 @@ impl Default for Theme {
 #[serde(default)]
 pub struct Config {
     pub font: Option<String>,
+    /// Render the whole app at an integer scale (2×) and let the compositor
+    /// downscale, instead of GTK rasterizing at a fractional scale directly.
+    /// On fractional-scaled HiDPI displays this is what keeps diagonal glyphs
+    /// (the powerline separators U+E0B0+) from stair-stepping — GTK otherwise
+    /// rasterizes the font glyph at too low a resolution and scales it up,
+    /// which native terminals like foot avoid. Costs extra GPU/memory (4× the
+    /// pixels); turn off if you're on an integer-scale (1×/2×) display where it
+    /// only softens text. Implemented by exporting GDK_SCALE=2 before GTK init.
+    pub force_integer_scale: bool,
     pub scrollback_lines: i64,
     pub shell: Option<String>,
     /// Terminal background opacity, 0.0–1.0 (1.0 = opaque).
@@ -62,6 +71,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             font: None,
+            force_integer_scale: true,
             scrollback_lines: 10_000,
             shell: None,
             background_opacity: 1.0,

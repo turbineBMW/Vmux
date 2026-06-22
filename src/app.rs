@@ -737,15 +737,20 @@ impl App {
     /// secondary label, falling back to the directory basename outside a repo.
     fn refresh_zone_git(zone: &Rc<Zone>) {
         let cwd = zone.cwd.clone();
-        let label = zone.path_label.clone();
+        let path_box = zone.path_box.clone();
+        let cache = zone.git_text.clone();
         glib::spawn_future_local(async move {
-            let text = match git::run_summary(&cwd).await {
-                Some(summary) => git::format_summary(&summary),
-                None => state::display_name(&cwd),
+            let summary = git::run_summary(&cwd).await;
+            let dir = state::display_name(&cwd);
+            let text = match &summary {
+                Some(s) => git::format_summary(s),
+                None => dir.clone(),
             };
-            if label.text().as_str() != text {
-                label.set_label(&text);
+            if *cache.borrow() == text {
+                return;
             }
+            cache.replace(text);
+            crate::zone::populate_path_box(&path_box, summary.as_ref(), &dir);
         });
     }
 
