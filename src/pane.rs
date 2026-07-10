@@ -2,8 +2,10 @@ use crate::app::App;
 use crate::zone::Zone;
 use crate::{keybinds, splits, state, term};
 use gtk4 as gtk;
+use gtk4::glib;
 use gtk::prelude::*;
 use libadwaita as adw;
+use std::cell::Cell;
 use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;
@@ -75,41 +77,44 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
         let stack = stack.clone();
         tab_view.connect_page_attached(move |_, _, _| {
             stack.set_visible_child_name("tabs");
+            app.schedule_drag_sweep();
             app.schedule_save();
+        });
+    }
+    // Whether the next page-detached is a tab close (as opposed to a drag
+    // tear-off). The close-page default handler confirms synchronously, so
+    // the pair never interleaves. (A close-confirmation flow, if ever added,
+    // would break that and need a per-page marker instead.)
+    let closing = Rc::new(Cell::new(false));
+    {
+        let closing = closing.clone();
+        tab_view.connect_close_page(move |_, _| {
+            closing.set(true);
+            glib::Propagation::Proceed
         });
     }
     {
         let app = app.clone();
         let stack = stack.clone();
         let zone = zone.clone();
-        tab_view.connect_page_detached(move |view, _, _| {
+        tab_view.connect_page_detached(move |view, page, _| {
             if view.root().is_none() {
                 return; // pane already being torn down
             }
+            let was_close = closing.take(); // consume on every detach
             if view.n_pages() == 0 {
-                let pane: gtk::Widget = stack.clone().upcast();
-                let in_split = pane
-                    .parent()
-                    .map(|p| p.is::<gtk::Paned>())
-                    .unwrap_or(false);
-                if in_split {
-                    if let Some(promoted) = splits::collapse_leaf(&pane)
-                        && let Some(t) = splits::first_terminal_in(&promoted)
-                    {
-                        term::focus_later(&t);
-                    }
-                    // The collapse may have promoted a new top-left pane.
-                    app.update_sidebar_reveal();
-                } else if let Some(z) = zone.upgrade() {
-                    // Last tab of the zone's only pane: drop the zone itself
-                    // (remove_zone focuses the next one, or recreates "main").
-                    app.remove_zone(&z);
-                    return;
+                if was_close {
+                    collapse_empty_pane(&app, &stack, &zone);
                 } else {
-                    stack.set_visible_child_name("empty");
+                    // Drag tear-off: fires as soon as the tab leaves the tab
+                    // bar, mid-drag. The pane must survive as a drop target
+                    // (cancel and drop-back re-attach the page here); the
+                    // sweep collapses it once the drag concludes.
+                    app.pane_emptied_by_drag(&stack, &zone, page);
+                    return; // no save: the layout is transient mid-drag
                 }
-            } else if let Some(page) = view.selected_page()
-                && let Some(t) = splits::first_terminal_in(&page.child())
+            } else if let Some(sel) = view.selected_page()
+                && let Some(t) = splits::first_terminal_in(&sel.child())
             {
                 term::focus_later(&t);
             }
@@ -122,6 +127,33 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     }
 
     stack
+}
+
+/// Collapse a pane that has no tabs left: promote its split sibling, or drop
+/// the zone when it was the zone's only pane, or fall back to the "empty"
+/// status page. Runs immediately on a tab close; deferred to the drag sweep
+/// on a tab drag tear-off.
+pub(crate) fn collapse_empty_pane(app: &Rc<App>, stack: &gtk::Stack, zone: &Weak<Zone>) {
+    let pane: gtk::Widget = stack.clone().upcast();
+    let in_split = pane
+        .parent()
+        .map(|p| p.is::<gtk::Paned>())
+        .unwrap_or(false);
+    if in_split {
+        if let Some(promoted) = splits::collapse_leaf(&pane)
+            && let Some(t) = splits::first_terminal_in(&promoted)
+        {
+            term::focus_later(&t);
+        }
+        // The collapse may have promoted a new top-left pane.
+        app.update_sidebar_reveal();
+    } else if let Some(z) = zone.upgrade() {
+        // Last tab of the zone's only pane: drop the zone itself
+        // (remove_zone focuses the next one, or recreates "main").
+        app.remove_zone(&z);
+    } else {
+        stack.set_visible_child_name("empty");
+    }
 }
 
 pub fn tab_view_of(pane: &gtk::Widget) -> Option<adw::TabView> {

@@ -5,7 +5,7 @@ use gtk4::{gio, glib};
 use gtk::prelude::*;
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;
 
@@ -29,6 +29,20 @@ pub struct App {
     /// both the Adwaita theme and vmux's built-in styles.
     style_provider: gtk::CssProvider,
     style_monitor: RefCell<Option<gio::FileMonitor>>,
+    /// Panes whose last tab was torn off by a drag; resolved by
+    /// [`Self::sweep_drag_emptied`] once the drag concludes.
+    drag_emptied: RefCell<Vec<PendingCollapse>>,
+}
+
+/// A pane emptied by a tab drag tear-off. It must stay alive as a drop target
+/// until the drag concludes (cancel and drop-back re-attach the page to it);
+/// every conclusion re-attaches the page to some view, so a page-attached
+/// anywhere triggers the sweep that resolves these.
+struct PendingCollapse {
+    pane: glib::WeakRef<gtk::Stack>,
+    zone: Weak<Zone>,
+    /// The torn-off tab, for reselecting/refocusing it after the drag.
+    page: glib::WeakRef<adw::TabPage>,
 }
 
 pub fn build(gtk_app: &adw::Application) {
@@ -51,6 +65,7 @@ pub fn build(gtk_app: &adw::Application) {
         bindings_monitor: RefCell::new(None),
         style_provider: gtk::CssProvider::new(),
         style_monitor: RefCell::new(None),
+        drag_emptied: RefCell::new(Vec::new()),
     });
     window::wire_chrome(&app, &chrome);
     // Notification clicks land here: switch to the originating zone and
@@ -457,6 +472,62 @@ impl App {
         }
         pane::close_tab_of(terminal);
         self.schedule_save();
+    }
+
+    // ----- tab drag-and-drop ------------------------------------------------
+
+    /// Record a pane whose last tab was torn off by a drag (page-detached with
+    /// zero pages left and no close in flight).
+    pub fn pane_emptied_by_drag(&self, pane: &gtk::Stack, zone: &Weak<Zone>, page: &adw::TabPage) {
+        self.drag_emptied.borrow_mut().push(PendingCollapse {
+            pane: pane.downgrade(),
+            zone: zone.clone(),
+            page: page.downgrade(),
+        });
+    }
+
+    /// Resolve drag-emptied panes. Called on every page-attached; deferred to
+    /// an idle so the drop handler has fully unwound before any pane dies.
+    pub fn schedule_drag_sweep(self: &Rc<Self>) {
+        if self.drag_emptied.borrow().is_empty() {
+            return;
+        }
+        let app = self.clone();
+        glib::idle_add_local_once(move || app.sweep_drag_emptied());
+    }
+
+    fn sweep_drag_emptied(self: &Rc<Self>) {
+        let entries = self.drag_emptied.take();
+        for e in entries {
+            let Some(pane) = e.pane.upgrade() else { continue };
+            if pane.root().is_none() {
+                continue; // torn down while the drag was in flight
+            }
+            let still_empty = pane::tab_view_of(pane.upcast_ref())
+                .is_none_or(|v| v.n_pages() == 0);
+            if still_empty {
+                // Keep the pane alive past the drag's async dnd-finished:
+                // adw's tab box only disconnects its GdkDrag handlers in
+                // drag_end, which on Wayland can arrive after this idle.
+                let keep = pane.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
+                    drop(keep)
+                });
+                pane::collapse_empty_pane(self, &pane, &e.zone);
+                self.schedule_save();
+            }
+            // Land selection and focus on the moved (or cancel-restored) tab;
+            // adw's attach_page does not select the page it inserts.
+            if let Some(page) = e.page.upgrade()
+                && let Some(dest) = splits::pane_of(&page.child())
+                && let Some(view) = pane::tab_view_of(&dest)
+            {
+                view.set_selected_page(&page);
+                if let Some(t) = splits::first_terminal_in(&page.child()) {
+                    term::focus_later(&t);
+                }
+            }
+        }
     }
 
     // ----- tab / pane actions ---------------------------------------------
