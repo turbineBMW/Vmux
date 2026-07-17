@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::zone::Zone;
 use crate::{keybinds, splits, state, term};
 use gtk4 as gtk;
-use gtk4::glib;
+use gtk4::{gdk, glib};
 use gtk::prelude::*;
 use libadwaita as adw;
 use std::cell::Cell;
@@ -56,6 +56,7 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     stack.set_hexpand(true);
     stack.set_vexpand(true);
     stack.add_css_class(splits::PANE_CLASS);
+    setup_single_tab_dnd(&stack, &tab_bar, &tab_view);
 
     {
         let app = app.clone();
@@ -77,8 +78,19 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
         let stack = stack.clone();
         tab_view.connect_page_attached(move |_, _, _| {
             stack.set_visible_child_name("tabs");
+            // Covers drag transfers where the attached page lands selected
+            // without a distinct selected-page notify.
+            refresh_pane_indicators(stack.upcast_ref());
             app.schedule_drag_sweep();
             app.schedule_save();
+        });
+    }
+    // Root/remote coloring follows the selected tab: recompute on selection
+    // change (tab switch, close, restore, drag detach).
+    {
+        let stack = stack.clone();
+        tab_view.connect_selected_page_notify(move |_| {
+            refresh_pane_indicators(stack.upcast_ref());
         });
     }
     // Whether the next page-detached is a tab close (as opposed to a drag
@@ -127,6 +139,90 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     }
 
     stack
+}
+
+/// Payload of a vmux-initiated last-tab drag (see [`setup_single_tab_dnd`]).
+struct LastTabDrag {
+    view: glib::WeakRef<adw::TabView>,
+    page: glib::WeakRef<adw::TabPage>,
+}
+
+/// libadwaita refuses to start a tab drag while the view holds a single page
+/// (adw-tab-box.c gates its tear-off on n_pages > 1), so a pane's last tab
+/// could never be dragged out. Cover exactly that case with our own drag
+/// source: a drop anywhere on a destination pane moves the page via
+/// transfer_page, whose detach half lands in the deferred-collapse path just
+/// like a native tear-off. Cancelled drags never detach anything, so they
+/// also skip adw's create-window emission (a CRITICAL when unhandled).
+fn setup_single_tab_dnd(stack: &gtk::Stack, tab_bar: &adw::TabBar, tab_view: &adw::TabView) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gdk::DragAction::MOVE);
+    source.set_button(gdk::BUTTON_PRIMARY);
+    // Capture phase: adw's internal reorder gesture on the tab would
+    // otherwise claim the sequence first (pointlessly — with one tab there
+    // is nothing to reorder).
+    source.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let view = tab_view.clone();
+        let bar = tab_bar.clone();
+        source.connect_prepare(move |_, x, y| {
+            if view.n_pages() != 1 {
+                return None; // adw handles multi-tab drags natively
+            }
+            // Not from a button (tab close, new-tab, sidebar reveal).
+            let mut w = bar.pick(x, y, gtk::PickFlags::DEFAULT)?;
+            while w != *bar.upcast_ref::<gtk::Widget>() {
+                if w.is::<gtk::Button>() {
+                    return None;
+                }
+                w = w.parent()?;
+            }
+            let payload = LastTabDrag {
+                view: view.downgrade(),
+                page: view.nth_page(0).downgrade(),
+            };
+            Some(gdk::ContentProvider::for_value(
+                &glib::BoxedAnyObject::new(payload).to_value(),
+            ))
+        });
+    }
+    {
+        let view = tab_view.clone();
+        source.connect_drag_begin(move |_, drag| {
+            if view.n_pages() == 0 {
+                return;
+            }
+            let label = gtk::Label::new(Some(&view.nth_page(0).title()));
+            label.add_css_class("tab-drag-icon");
+            gtk::DragIcon::for_drag(drag).set_child(Some(&label));
+        });
+    }
+    tab_bar.add_controller(source);
+
+    let target = gtk::DropTarget::new(glib::BoxedAnyObject::static_type(), gdk::DragAction::MOVE);
+    {
+        let stack = stack.clone();
+        target.connect_drop(move |_, value, _, _| {
+            let Ok(boxed) = value.get::<glib::BoxedAnyObject>() else {
+                return false;
+            };
+            let Ok(payload) = boxed.try_borrow::<LastTabDrag>() else {
+                return false;
+            };
+            let (Some(src), Some(page)) = (payload.view.upgrade(), payload.page.upgrade()) else {
+                return false;
+            };
+            let Some(dest) = tab_view_of(stack.upcast_ref()) else {
+                return false;
+            };
+            if src == dest {
+                return true; // dropped back on its own pane: nothing to move
+            }
+            src.transfer_page(&page, &dest, dest.n_pages());
+            true
+        });
+    }
+    stack.add_controller(target);
 }
 
 /// Collapse a pane that has no tabs left: promote its split sibling, or drop
@@ -238,6 +334,11 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                     if let Some(page) = pw.upgrade() {
                         refresh_title(term, &page);
                     }
+                    // Resolve the pane at signal time — tabs migrate between
+                    // panes via drag, so capturing it here would go stale.
+                    if let Some(pane) = splits::pane_of(term.upcast_ref()) {
+                        refresh_pane_indicators(&pane);
+                    }
                 },
             );
         }
@@ -286,8 +387,44 @@ fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
 /// The foreground command vmux-relay last reported via the fgproc termprop,
 /// or None when unset/empty (the shell itself is in front).
 fn fg_command(terminal: &vte::Terminal) -> Option<String> {
-    let data = terminal.termprop_data(vmux::osc_scan::FGPROC_TERMPROP_NAME);
-    let name = String::from_utf8_lossy(&data);
+    let (name, _) = fg_payload(terminal);
     let name = name.trim();
     (!name.is_empty()).then(|| name.to_string())
+}
+
+/// The (command name, euid) pair vmux-relay last reported via the fgproc
+/// termprop. Empty name/None uid when the relay never reported (no relay, or
+/// the shell has been in front since startup with an unreadable uid).
+fn fg_payload(terminal: &vte::Terminal) -> (String, Option<u32>) {
+    let data = terminal.termprop_data(vmux::osc_scan::FGPROC_TERMPROP_NAME);
+    vmux::osc_scan::parse_fgproc_payload(&data)
+}
+
+/// Foreground commands that hold a session on another machine (kgx's list).
+const REMOTE_COMMANDS: &[&str] = &["ssh", "telnet", "mosh-client", "mosh", "et"];
+
+/// Recolor a pane's selected tab after its foreground process: `vmux-root`
+/// when the process runs as root (euid 0), `vmux-remote` when it is a remote
+/// session (ssh and friends). AdwTabBar exposes no per-tab-widget CSS hook,
+/// so — like kgx recoloring its window — the classes live on the pane and
+/// follow the *selected* tab. Idempotent; call on any signal that may change
+/// the selected tab or its foreground process.
+pub fn refresh_pane_indicators(pane: &gtk::Widget) {
+    let mut root = false;
+    let mut remote = false;
+    if let Some(view) = tab_view_of(pane)
+        && let Some(page) = view.selected_page()
+        && let Some(t) = splits::first_terminal_in(&page.child())
+    {
+        let (name, uid) = fg_payload(&t);
+        root = uid == Some(0);
+        remote = REMOTE_COMMANDS.contains(&name.as_str());
+    }
+    for (class, on) in [("vmux-root", root), ("vmux-remote", remote)] {
+        if on {
+            pane.add_css_class(class);
+        } else {
+            pane.remove_css_class(class);
+        }
+    }
 }

@@ -33,6 +33,14 @@ const CSS: &str = "
 .zone-path .git-lines-del    { color: #c01c28; }
 .zone-path .git-ahead        { color: #2a7bde; }
 .zone-row { padding: 6px 8px; }
+/* Icon for the custom last-tab drag (pane::setup_single_tab_dnd); native
+   multi-tab drags render adw's own tab snapshot instead. */
+.tab-drag-icon {
+    background-color: var(--window-bg-color);
+    border: 1px solid var(--sidebar-border-color);
+    border-radius: 6px;
+    padding: 4px 24px;
+}
 window.vmux-transparent { background-color: transparent; }
 /* The flat headerbar relies on the window background removed above. Paint the
    replacement on the .top-bar revealer, NOT on the headerbar itself: GTK dims
@@ -61,6 +69,26 @@ tabbar tab:selected:active { background-color: color-mix(in srgb, currentColor 1
 }
 .vmux-pane:focus-within tabbar tab:selected:hover { background-color: color-mix(in srgb, var(--accent-bg-color) 30%, transparent); }
 .vmux-pane:focus-within tabbar tab:selected:active { background-color: color-mix(in srgb, var(--accent-bg-color) 38%, transparent); }
+/* Selected tab recolors when its foreground process runs as root or holds a
+   remote (ssh) session — pane::refresh_pane_indicators toggles the classes.
+   Applies in unfocused panes too (it's a security signal, like kgx coloring
+   its whole window). These rules tie the focus-within rules above on
+   specificity, so source order — root last of all, out-ranking remote for
+   sudo+ssh — decides; the :hover/:active variants exist for the same reason.
+   Override the colors in ~/.config/vmux/style.css. */
+:root { --vmux-remote-color: #9141ac; --vmux-root-color: #c01c28; }
+.vmux-pane.vmux-remote tabbar tab:selected {
+    background-color: color-mix(in srgb, var(--vmux-remote-color) 30%, transparent);
+    color: color-mix(in srgb, var(--vmux-remote-color) 40%, var(--window-fg-color));
+}
+.vmux-pane.vmux-remote tabbar tab:selected:hover { background-color: color-mix(in srgb, var(--vmux-remote-color) 36%, transparent); }
+.vmux-pane.vmux-remote tabbar tab:selected:active { background-color: color-mix(in srgb, var(--vmux-remote-color) 44%, transparent); }
+.vmux-pane.vmux-root tabbar tab:selected {
+    background-color: color-mix(in srgb, var(--vmux-root-color) 30%, transparent);
+    color: color-mix(in srgb, var(--vmux-root-color) 40%, var(--window-fg-color));
+}
+.vmux-pane.vmux-root tabbar tab:selected:hover { background-color: color-mix(in srgb, var(--vmux-root-color) 36%, transparent); }
+.vmux-pane.vmux-root tabbar tab:selected:active { background-color: color-mix(in srgb, var(--vmux-root-color) 44%, transparent); }
 ";
 
 fn main() -> glib::ExitCode {

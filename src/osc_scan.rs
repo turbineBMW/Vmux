@@ -65,10 +65,34 @@ pub fn encode_termprop(n: &Notification, seq: u64) -> Vec<u8> {
     osc666_termprop(TERMPROP_NAME, json.as_bytes())
 }
 
-/// The vte termprop OSC carrying the current foreground command (empty value
-/// clears it): `OSC 666 ; vte.ext.vmux.fgproc=<base64(cmd)> ST`.
-pub fn encode_fgproc_termprop(cmd: &str) -> Vec<u8> {
-    osc666_termprop(FGPROC_TERMPROP_NAME, cmd.as_bytes())
+/// Separator between the command name and the euid in the fgproc payload.
+/// US (0x1F) cannot appear in a command basename, and the payload travels
+/// base64-encoded so the control byte never hits the OSC grammar.
+const FGPROC_SEP: char = '\u{1F}';
+
+/// The vte termprop OSC carrying the current foreground command and, when
+/// known, the effective uid of the foreground process group leader:
+/// `OSC 666 ; vte.ext.vmux.fgproc=<base64(name[\x1F euid])> ST`. An empty
+/// name means the shell itself is in the foreground.
+pub fn encode_fgproc_termprop(cmd: &str, uid: Option<u32>) -> Vec<u8> {
+    let payload = match uid {
+        Some(uid) => format!("{cmd}{FGPROC_SEP}{uid}"),
+        None => cmd.to_string(),
+    };
+    osc666_termprop(FGPROC_TERMPROP_NAME, payload.as_bytes())
+}
+
+/// Split an fgproc termprop payload back into (command name, euid). A payload
+/// without the separator — or with a non-numeric tail — is a name-only
+/// payload from an older relay: the whole string is the name, uid unknown.
+pub fn parse_fgproc_payload(data: &[u8]) -> (String, Option<u32>) {
+    let text = String::from_utf8_lossy(data);
+    if let Some((name, uid)) = text.rsplit_once(FGPROC_SEP)
+        && let Ok(uid) = uid.parse::<u32>()
+    {
+        return (name.to_string(), Some(uid));
+    }
+    (text.into_owned(), None)
 }
 
 /// Frame one termprop OSC: `OSC 666 ; name=<base64(value)> ST`. Always
@@ -582,6 +606,38 @@ mod tests {
         assert_eq!(base64_decode(b"Zm9vYg==").as_deref(), Some(&b"foob"[..]));
         assert!(base64_decode(b"a").is_none());
         assert!(base64_decode(b"ab=c").is_none());
+    }
+
+    #[test]
+    fn fgproc_payload_roundtrip() {
+        // Encoded value is base64(name \x1F uid); decode and parse it back.
+        let strip = |bytes: Vec<u8>| {
+            let s = String::from_utf8(bytes).unwrap();
+            let b64 = &s["\x1b]666;vte.ext.vmux.fgproc=".len()..s.len() - 2];
+            base64_decode(b64.as_bytes()).unwrap()
+        };
+        let payload = strip(encode_fgproc_termprop("ssh", Some(1000)));
+        assert_eq!(parse_fgproc_payload(&payload), ("ssh".into(), Some(1000)));
+        // Root shell in the foreground: empty name, uid 0.
+        let payload = strip(encode_fgproc_termprop("", Some(0)));
+        assert_eq!(parse_fgproc_payload(&payload), (String::new(), Some(0)));
+        // No uid available: name-only payload.
+        let payload = strip(encode_fgproc_termprop("vim", None));
+        assert_eq!(parse_fgproc_payload(&payload), ("vim".into(), None));
+    }
+
+    #[test]
+    fn fgproc_payload_lenient_parse() {
+        assert_eq!(parse_fgproc_payload(b""), (String::new(), None));
+        assert_eq!(parse_fgproc_payload(b"ssh"), ("ssh".into(), None));
+        assert_eq!(parse_fgproc_payload(b"ssh\x1f0"), ("ssh".into(), Some(0)));
+        // Garbage after the separator: fall back to treating it all as name.
+        assert_eq!(parse_fgproc_payload(b"ssh\x1fx"), ("ssh\u{1f}x".into(), None));
+        // Only the LAST separator splits; earlier ones stay in the name.
+        assert_eq!(
+            parse_fgproc_payload(b"a\x1fb\x1f42"),
+            ("a\u{1f}b".into(), Some(42))
+        );
     }
 
     #[test]

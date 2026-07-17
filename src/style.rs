@@ -53,6 +53,20 @@ pub const TEMPLATE: &str = r#"/* vmux GTK theme overrides.
  *   .zone-path .git-ahead       { color: #2a7bde; }   unpushed commits
  *   .zone-path .git-clean       { opacity: 0.55; }    the clean (check) marker
  *   .zone-path .zone-path-dir   { opacity: 0.55; }    directory name (no repo)
+ *
+ * A pane's selected tab recolors when its foreground process runs as root
+ * or is a remote session (ssh / mosh / telnet / et). Change the colors
+ * (defaults shown):
+ *
+ *   :root {
+ *     --vmux-root-color:   #c01c28;
+ *     --vmux-remote-color: #9141ac;
+ *   }
+ *
+ * or restyle the tabs fully:
+ *
+ *   .vmux-pane.vmux-root tabbar tab:selected   { ... }
+ *   .vmux-pane.vmux-remote tabbar tab:selected { ... }
  */
 "#;
 

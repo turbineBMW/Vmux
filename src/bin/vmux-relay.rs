@@ -190,6 +190,16 @@ fn fg_name(pgid: libc::pid_t) -> Option<String> {
     (!comm.is_empty()).then(|| comm.to_string())
 }
 
+/// Effective uid of the foreground process group leader, from the Uid: line
+/// of /proc/<pgid>/status (fields: real, effective, saved, fs). The euid is
+/// what matters for setuid binaries like sudo. None on any read/parse
+/// failure — the payload then goes out name-only.
+fn fg_uid(pgid: libc::pid_t) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pgid}/status")).ok()?;
+    let uids = status.lines().find_map(|l| l.strip_prefix("Uid:"))?;
+    uids.split_whitespace().nth(1)?.parse().ok()
+}
+
 /// The relay core: a poll loop over stdin (vte→shell), the inner pty master
 /// (both directions) and stdout (shell→vte), plus the self-pipe.
 ///
@@ -209,11 +219,13 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     let mut stdin_open = true;
     let mut status: Option<libc::c_int> = None;
     let mut drain_ticks = 0u32;
-    // Foreground-command tracking on the inner pty (for tab titles). last_sent
-    // starts as "" (idle) so sitting at the shell prompt emits nothing.
+    // Foreground-command tracking on the inner pty (for tab titles and the
+    // root/remote tab indicator): (command name, euid). last_sent starts as
+    // ("", None), so the first check always emits one payload carrying the
+    // shell's uid — required to color the tabs of a root-run vmux.
     let mut last_pgid: libc::pid_t = -1;
-    let mut last_sent: Option<String> = Some(String::new());
-    let mut pending_fg: Option<String> = None;
+    let mut last_sent: Option<(String, Option<u32>)> = Some((String::new(), None));
+    let mut pending_fg: Option<(String, Option<u32>)> = None;
     // Short poll ticks scheduled after user input, to catch a silent command
     // (e.g. `sleep`) taking the foreground without producing output. Lapses
     // back to a blocking wait when idle, so there are no wakeups at rest.
@@ -367,18 +379,22 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
             }
         }
 
-        // Tab-title hint: report the inner pty's foreground command (empty =
-        // the shell itself is in front). The /proc read happens only when the
-        // pgid changes; the termprop is queued and spliced into the output at
-        // the next sequence boundary, so it can never split another sequence.
+        // Tab-title / root-remote hint: report the inner pty's foreground
+        // command and euid (empty name = the shell itself is in front). The
+        // /proc reads happen only when the pgid changes; the termprop is
+        // queued and spliced into the output at the next sequence boundary,
+        // so it can never split another sequence.
         if status.is_none() {
             let pg = unsafe { libc::tcgetpgrp(master) };
             if pg != last_pgid {
                 let name = if pg == child { Some(String::new()) } else { fg_name(pg) };
                 if let Some(name) = name {
                     last_pgid = pg;
-                    if last_sent.as_deref() != Some(name.as_str()) {
-                        pending_fg = Some(name);
+                    // Uid read failure doesn't retry like a name failure: a
+                    // name-only payload still titles the tab correctly.
+                    let entry = (name, fg_uid(pg));
+                    if last_sent.as_ref() != Some(&entry) {
+                        pending_fg = Some(entry);
                     }
                 }
             }
@@ -387,14 +403,14 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
             // still a boundary, since at_ground reflects the end of what is
             // queued, so the OSC can't split another sequence.
             if scanner.at_ground()
-                && let Some(name) = pending_fg.take()
+                && let Some((name, uid)) = pending_fg.take()
             {
                 if out_start >= out.len() {
                     out.clear();
                     out_start = 0;
                 }
-                out.extend_from_slice(&encode_fgproc_termprop(&name));
-                last_sent = Some(name);
+                out.extend_from_slice(&encode_fgproc_termprop(&name, uid));
+                last_sent = Some((name, uid));
             }
         }
     }
