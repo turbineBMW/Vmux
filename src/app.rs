@@ -86,6 +86,10 @@ pub fn build(gtk_app: &adw::Application) {
     }
     app.sync_window_transparency();
     app.sync_titlebar();
+    // Restore the saved sidebar visibility. Done after wire_chrome so the
+    // titlebar toggle's bidirectional binding is already live and picks this
+    // up, rather than clobbering it via sync_create().
+    app.split_view.set_show_sidebar(st.config.show_sidebar);
     app.reinstall_shortcuts();
     app.install_user_css();
     app.watch_text_bindings();

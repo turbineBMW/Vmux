@@ -56,6 +56,8 @@ pub struct Config {
     pub background_opacity: f64,
     /// Hide the window titlebar (the sidebar header keeps the app menu).
     pub hide_titlebar: bool,
+    /// Whether the zone sidebar is shown; restored across restarts.
+    pub show_sidebar: bool,
     /// Desktop notifications when a background terminal emits a
     /// notification escape (OSC 9 / 777 / kitty 99).
     pub desktop_notifications: bool,
@@ -76,6 +78,7 @@ impl Default for Config {
             shell: None,
             background_opacity: 1.0,
             hide_titlebar: false,
+            show_sidebar: true,
             desktop_notifications: true,
             notify_on_bell: false,
             theme: Theme::default(),

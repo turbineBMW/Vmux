@@ -178,9 +178,11 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
     }
     {
         let app = app.clone();
-        chrome
-            .split_view
-            .connect_show_sidebar_notify(move |_| app.update_sidebar_reveal());
+        chrome.split_view.connect_show_sidebar_notify(move |sv| {
+            app.update_sidebar_reveal();
+            app.config.borrow_mut().show_sidebar = sv.shows_sidebar();
+            app.schedule_save();
+        });
     }
     {
         let app = app.clone();
