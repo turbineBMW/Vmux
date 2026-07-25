@@ -51,6 +51,10 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .hexpand(true)
         .vexpand(true)
+        // Our own touch gesture (add_touch_scroll) drives finger scrolling;
+        // the built-in kinetic-scroll gesture would otherwise claim the touch
+        // sequence the instant it moves, starving ours of updates.
+        .kinetic_scrolling(false)
         .build();
 
     let focus = gtk::EventControllerFocus::new();
@@ -127,13 +131,94 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
         });
     }
 
+    add_touch_scroll(&term);
+
     let argv = shell_argv(&app.config.borrow());
     spawn_argv(&term, &cwd, &argv);
     scrolled
 }
 
+/// Vertical distance a finger must travel before a touch drag is treated as a
+/// scroll rather than a tap. Below this the touch is left to vte so taps still
+/// reach the terminal.
+const TOUCH_PAN_THRESHOLD: f64 = 8.0;
+
+/// Drag-to-scroll with a finger, without aiming for the scrollbar.
+///
+/// vte binds touch drags to text selection and claims the touch sequence on
+/// the first motion event, which denies any competing GtkGesture before it can
+/// react — so a threshold-based GestureDrag never even receives an update.
+/// Instead we watch the raw touch events in the capture phase (ahead of vte)
+/// and steer them by hand: small movements and taps are passed through to vte
+/// (`Proceed`), and once the finger clearly pans we consume the rest of the
+/// sequence (`Stop`) and drive the scrollback adjustment ourselves.
+fn add_touch_scroll(term: &vte::Terminal) {
+    // Y position (surface coords) where the current touch started.
+    let start_y = std::rc::Rc::new(std::cell::Cell::new(0.0));
+    // Adjustment offset the pan is anchored to, or NaN until it commits to a
+    // pan. Non-NaN also means "we own this sequence now".
+    let anchor = std::rc::Rc::new(std::cell::Cell::new(f64::NAN));
+
+    let ctl = gtk::EventControllerLegacy::new();
+    ctl.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let tw = term.downgrade();
+    ctl.connect_event(move |_, ev| {
+        use gtk::gdk::EventType;
+        let Some(term) = tw.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        match ev.event_type() {
+            EventType::TouchBegin => {
+                start_y.set(ev.position().map_or(0.0, |(_, y)| y));
+                anchor.set(f64::NAN);
+                // Let vte see the press so a tap still positions/pastes.
+                glib::Propagation::Proceed
+            }
+            EventType::TouchUpdate => {
+                let Some((_, y)) = ev.position() else {
+                    return glib::Propagation::Proceed;
+                };
+                let dy = y - start_y.get();
+                let Some(adj) = term.vadjustment() else {
+                    return glib::Propagation::Proceed;
+                };
+                if anchor.get().is_nan() {
+                    // Still within the tap threshold: leave it to vte.
+                    if dy.abs() < TOUCH_PAN_THRESHOLD {
+                        return glib::Propagation::Proceed;
+                    }
+                    // Commit to a pan, anchoring so there is no jump, and drop
+                    // any selection vte may have begun in the pre-commit phase.
+                    anchor.set(adj.value() + dy);
+                    term.unselect_all();
+                }
+                // Finger down-drag (positive dy) reveals earlier output, i.e. a
+                // smaller adjustment value.
+                adj.set_value(anchor.get() - dy);
+                glib::Propagation::Stop
+            }
+            EventType::TouchEnd | EventType::TouchCancel => {
+                let panned = !anchor.get().is_nan();
+                anchor.set(f64::NAN);
+                // Only swallow the release if we actually took over the pan;
+                // otherwise let vte complete the tap.
+                if panned {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+            _ => glib::Propagation::Proceed,
+        }
+    });
+    term.add_controller(ctl);
+}
+
 fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
     term.set_mouse_autohide(true);
+    // Scroll in pixels rather than whole rows, so a finger pan tracks
+    // smoothly instead of snapping a line at a time.
+    term.set_scroll_unit_is_pixels(true);
     term.set_font_scale(scale);
     term.set_hexpand(true);
     term.set_vexpand(true);
