@@ -78,19 +78,12 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
         let stack = stack.clone();
         tab_view.connect_page_attached(move |_, _, _| {
             stack.set_visible_child_name("tabs");
-            // Covers drag transfers where the attached page lands selected
-            // without a distinct selected-page notify.
-            refresh_pane_indicators(stack.upcast_ref());
+            // adw builds the tab widget in its own page-attached handler,
+            // connected in set_view above and so run before this one — the
+            // new tab is already there to be classed.
+            refresh_tab_indicators(stack.upcast_ref());
             app.schedule_drag_sweep();
             app.schedule_save();
-        });
-    }
-    // Root/remote coloring follows the selected tab: recompute on selection
-    // change (tab switch, close, restore, drag detach).
-    {
-        let stack = stack.clone();
-        tab_view.connect_selected_page_notify(move |_| {
-            refresh_pane_indicators(stack.upcast_ref());
         });
     }
     // Whether the next page-detached is a tab close (as opposed to a drag
@@ -337,7 +330,7 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                     // Resolve the pane at signal time — tabs migrate between
                     // panes via drag, so capturing it here would go stale.
                     if let Some(pane) = splits::pane_of(term.upcast_ref()) {
-                        refresh_pane_indicators(&pane);
+                        refresh_tab_indicators(&pane);
                     }
                 },
             );
@@ -403,28 +396,68 @@ fn fg_payload(terminal: &vte::Terminal) -> (String, Option<u32>) {
 /// Foreground commands that hold a session on another machine (kgx's list).
 const REMOTE_COMMANDS: &[&str] = &["ssh", "telnet", "mosh-client", "mosh", "et"];
 
-/// Recolor a pane's selected tab after its foreground process: `vmux-root`
-/// when the process runs as root (euid 0), `vmux-remote` when it is a remote
-/// session (ssh and friends). AdwTabBar exposes no per-tab-widget CSS hook,
-/// so — like kgx recoloring its window — the classes live on the pane and
-/// follow the *selected* tab. Idempotent; call on any signal that may change
-/// the selected tab or its foreground process.
-pub fn refresh_pane_indicators(pane: &gtk::Widget) {
-    let mut root = false;
-    let mut remote = false;
-    if let Some(view) = tab_view_of(pane)
-        && let Some(page) = view.selected_page()
-        && let Some(t) = splits::first_terminal_in(&page.child())
-    {
-        let (name, uid) = fg_payload(&t);
-        root = uid == Some(0);
-        remote = REMOTE_COMMANDS.contains(&name.as_str());
-    }
-    for (class, on) in [("vmux-root", root), ("vmux-remote", remote)] {
-        if on {
-            pane.add_css_class(class);
-        } else {
-            pane.remove_css_class(class);
+/// Recolor every tab in a pane after *its own* foreground process:
+/// `vmux-root` when that process runs as root (euid 0), `vmux-remote` when it
+/// is a remote session (ssh and friends). Unselected tabs are marked too — a
+/// root shell you can't see is exactly the one worth flagging — so the class
+/// has to land per tab rather than on the pane.
+///
+/// Idempotent; call on any signal that adds a tab or changes what one runs.
+/// Recomputing the whole pane (rather than the one tab that changed) keeps it
+/// correct when the widgets are rebuilt under us, which adw does freely.
+pub fn refresh_tab_indicators(pane: &gtk::Widget) {
+    for tab in tab_widgets(pane) {
+        let mut root = false;
+        let mut remote = false;
+        if let Some(page) = page_of_tab_widget(&tab)
+            && let Some(t) = splits::first_terminal_in(&page.child())
+        {
+            let (name, uid) = fg_payload(&t);
+            root = uid == Some(0);
+            remote = REMOTE_COMMANDS.contains(&name.as_str());
+        }
+        for (class, on) in [("vmux-root", root), ("vmux-remote", remote)] {
+            if on {
+                tab.add_css_class(class);
+            } else {
+                tab.remove_css_class(class);
+            }
         }
     }
+}
+
+/// The AdwTab widgets inside a pane's tab bar, one per page.
+///
+/// AdwTab is private, so match on the CSS node name (`tab`) instead of the
+/// type; the node name is part of libadwaita's documented styling contract,
+/// unlike the C type. Descends the whole tab bar because the widgets sit
+/// several private containers deep (tabbox > tabboxchild > tab), and pinned
+/// tabs live in a second tabbox.
+fn tab_widgets(pane: &gtk::Widget) -> Vec<gtk::Widget> {
+    fn walk(w: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+        if w.css_name() == "tab" {
+            out.push(w.clone());
+            return; // nothing nested inside a tab is another tab
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            walk(&c, out);
+            child = c.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(bar) = tab_bar_of(pane) {
+        walk(bar.upcast_ref(), &mut out);
+    }
+    out
+}
+
+/// The page an AdwTab widget stands for, read through its `page` property —
+/// the only link back, as adw exposes no public tab-widget API at all. Typed
+/// check first so a libadwaita that reworked the property drops the coloring
+/// instead of panicking.
+fn page_of_tab_widget(tab: &gtk::Widget) -> Option<adw::TabPage> {
+    tab.has_property_with_type("page", adw::TabPage::static_type())
+        .then(|| tab.property::<Option<adw::TabPage>>("page"))
+        .flatten()
 }
