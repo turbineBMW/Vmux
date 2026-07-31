@@ -151,13 +151,27 @@ const TOUCH_PAN_THRESHOLD: f64 = 8.0;
 /// Instead we watch the raw touch events in the capture phase (ahead of vte)
 /// and steer them by hand: small movements and taps are passed through to vte
 /// (`Proceed`), and once the finger clearly pans we consume the rest of the
-/// sequence (`Stop`) and drive the scrollback adjustment ourselves.
+/// sequence (`Stop`) and scroll it ourselves.
+///
+/// How we scroll depends on the foreground program. When vte's scrollback has
+/// room to move (normal-screen shell output) we drag its adjustment directly —
+/// smooth and pixel-accurate. When it doesn't (a full-screen/alt-screen app
+/// such as an editor or pager) there is nothing in the scrollback to move, so
+/// we synthesise mouse-wheel escapes and feed them to the child, which lets
+/// mouse-aware TUIs (editors, Claude Code, …) scroll. vte4 exposes no way to
+/// query the app's mouse mode, so programs that never enable mouse reporting
+/// won't respond to this.
 fn add_touch_scroll(term: &vte::Terminal) {
+    use std::cell::Cell;
     // Y position (surface coords) where the current touch started.
-    let start_y = std::rc::Rc::new(std::cell::Cell::new(0.0));
-    // Adjustment offset the pan is anchored to, or NaN until it commits to a
-    // pan. Non-NaN also means "we own this sequence now".
-    let anchor = std::rc::Rc::new(std::cell::Cell::new(f64::NAN));
+    let start_y = Rc::new(Cell::new(0.0));
+    // NaN until the gesture commits to a scroll; non-NaN also means "we own
+    // this sequence now". In adjustment mode it holds the anchored adjustment
+    // value; in wheel mode it holds the Y of the last emitted wheel step.
+    let anchor = Rc::new(Cell::new(f64::NAN));
+    // Once committed: true = feed wheel escapes to the child, false = drive the
+    // scrollback adjustment.
+    let wheel = Rc::new(Cell::new(false));
 
     let ctl = gtk::EventControllerLegacy::new();
     ctl.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -175,34 +189,58 @@ fn add_touch_scroll(term: &vte::Terminal) {
                 glib::Propagation::Proceed
             }
             EventType::TouchUpdate => {
-                let Some((_, y)) = ev.position() else {
+                let Some((x, y)) = ev.position() else {
                     return glib::Propagation::Proceed;
                 };
                 let dy = y - start_y.get();
-                let Some(adj) = term.vadjustment() else {
-                    return glib::Propagation::Proceed;
-                };
                 if anchor.get().is_nan() {
                     // Still within the tap threshold: leave it to vte.
                     if dy.abs() < TOUCH_PAN_THRESHOLD {
                         return glib::Propagation::Proceed;
                     }
-                    // Commit to a pan, anchoring so there is no jump, and drop
-                    // any selection vte may have begun in the pre-commit phase.
-                    anchor.set(adj.value() + dy);
+                    // Commit. Prefer the scrollback if it has anywhere to go;
+                    // otherwise fall back to feeding wheel events to the app.
+                    let has_scrollback = term
+                        .vadjustment()
+                        .is_some_and(|a| a.upper() - a.page_size() > 1.0);
+                    wheel.set(!has_scrollback);
+                    anchor.set(if has_scrollback {
+                        term.vadjustment().map_or(0.0, |a| a.value()) + dy
+                    } else {
+                        y
+                    });
+                    // Drop any selection vte began during the pre-commit phase.
                     term.unselect_all();
                 }
-                // Finger down-drag (positive dy) reveals earlier output, i.e. a
-                // smaller adjustment value.
-                adj.set_value(anchor.get() - dy);
+                if wheel.get() {
+                    // One wheel notch per few rows of finger travel, so the
+                    // on-screen motion roughly tracks the finger for a typical
+                    // 3-line wheel step. Finger moving down (y grows) reveals
+                    // earlier output, i.e. wheel up.
+                    let step = 3.0 * term.char_height().max(1) as f64;
+                    let mut last = anchor.get();
+                    while y - last >= step {
+                        feed_wheel(&term, x, y, true);
+                        last += step;
+                    }
+                    while last - y >= step {
+                        feed_wheel(&term, x, y, false);
+                        last -= step;
+                    }
+                    anchor.set(last);
+                } else if let Some(adj) = term.vadjustment() {
+                    // Finger down-drag (positive dy) reveals earlier output,
+                    // i.e. a smaller adjustment value.
+                    adj.set_value(anchor.get() - dy);
+                }
                 glib::Propagation::Stop
             }
             EventType::TouchEnd | EventType::TouchCancel => {
-                let panned = !anchor.get().is_nan();
+                let owned = !anchor.get().is_nan();
                 anchor.set(f64::NAN);
-                // Only swallow the release if we actually took over the pan;
-                // otherwise let vte complete the tap.
-                if panned {
+                // Only swallow the release if we actually took over; otherwise
+                // let vte complete the tap.
+                if owned {
                     glib::Propagation::Stop
                 } else {
                     glib::Propagation::Proceed
@@ -212,6 +250,25 @@ fn add_touch_scroll(term: &vte::Terminal) {
         }
     });
     term.add_controller(ctl);
+}
+
+/// Feed one SGR (1006) mouse-wheel event to the child at the cell under
+/// (`x`, `y`), which are given in the terminal's surface coordinates.
+fn feed_wheel(term: &vte::Terminal, x: f64, y: f64, up: bool) {
+    // Translate surface coords to widget-local so the reported cell lands in
+    // the right place (e.g. the correct split under the finger). Fall back to
+    // the raw coords if the widget isn't in a surface yet.
+    let (lx, ly) = term
+        .root()
+        .and_then(|root| term.compute_point(&root, &gtk::graphene::Point::new(0.0, 0.0)))
+        .map_or((x, y), |o| (x - o.x() as f64, y - o.y() as f64));
+
+    let col =
+        ((lx / term.char_width().max(1) as f64) as i64 + 1).clamp(1, term.column_count().max(1));
+    let row =
+        ((ly / term.char_height().max(1) as f64) as i64 + 1).clamp(1, term.row_count().max(1));
+    let btn = if up { 64 } else { 65 };
+    term.feed_child(format!("\x1b[<{btn};{col};{row}M").as_bytes());
 }
 
 fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
