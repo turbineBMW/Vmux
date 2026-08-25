@@ -2,7 +2,6 @@ use crate::zone::Zone;
 use crate::{git, keybinds, pane, splits, state, style, term, text_bindings, window};
 use gtk4 as gtk;
 use gtk4::{gio, glib};
-use gtk::prelude::*;
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};

@@ -124,8 +124,8 @@ fn run(args: &[CString]) -> i32 {
     // otherwise echo every keystroke back to vte (the inner shell already
     // echoes), turn ^C into SIGINT for the relay instead of a byte for the
     // inner shell's job control, and re-cook \n into \r\n on output.
-    if orig.is_some() {
-        let mut raw = orig.unwrap();
+    if let Some(t) = &orig {
+        let mut raw = *t;
         unsafe {
             libc::cfmakeraw(&mut raw);
             libc::tcsetattr(0, libc::TCSANOW, &raw);

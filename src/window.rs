@@ -3,7 +3,6 @@ use crate::state;
 use crate::zone::Zone;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
-use gtk::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::rc::Rc;

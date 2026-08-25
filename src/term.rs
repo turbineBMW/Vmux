@@ -3,7 +3,6 @@ use crate::state::Config;
 use crate::zone::Zone;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
-use gtk::prelude::*;
 use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;

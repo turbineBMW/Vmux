@@ -3,7 +3,6 @@ use crate::zone::Zone;
 use crate::{keybinds, splits, state, term};
 use gtk4 as gtk;
 use gtk4::{gdk, glib};
-use gtk::prelude::*;
 use libadwaita as adw;
 use std::cell::Cell;
 use std::rc::{Rc, Weak};

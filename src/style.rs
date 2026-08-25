@@ -396,7 +396,7 @@ fn upgrade_stylesheet(existing: &str, legacy_state: Option<&str>) -> String {
                     .and_then(|value| value.get(index)),
                 DEFAULT_PALETTE[index],
             );
-            managed = replace_value(&managed, Declaration::NamedColor(*name), &color);
+            managed = replace_value(&managed, Declaration::NamedColor(name), &color);
         }
 
         if let Some(font) = config.get("font").and_then(serde_json::Value::as_str) {

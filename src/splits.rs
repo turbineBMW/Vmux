@@ -1,6 +1,5 @@
 use gtk4 as gtk;
 use gtk4::glib;
-use gtk::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use vte4 as vte;

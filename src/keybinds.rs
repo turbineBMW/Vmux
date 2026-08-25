@@ -2,7 +2,6 @@ use crate::app::App;
 use crate::state::Config;
 use gtk4 as gtk;
 use gtk4::glib;
-use gtk::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
