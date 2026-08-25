@@ -77,8 +77,8 @@ pub fn add_sc(ctl: &gtk::ShortcutController, trig: &str, f: impl Fn() -> glib::P
     }
 }
 
-/// The settings dialog: General (font/scrollback/shell), Appearance
-/// (terminal colors), and all keybindings.
+/// The settings dialog: General behavior, the style.css entry point, and all
+/// keybindings.
 pub fn show_settings(app: &Rc<App>) {
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title("Preferences");
@@ -90,93 +90,6 @@ pub fn show_settings(app: &Rc<App>) {
         .build();
     let group = adw::PreferencesGroup::new();
     group.set_title("Terminal");
-
-    // Font: dropdown of installed monospace families + a size spinner. The
-    // config still stores a single Pango description string ("Family Size").
-    let (cur_family, cur_size) = match app.config.borrow().font.as_deref() {
-        Some(s) => {
-            let desc = gtk::pango::FontDescription::from_string(s);
-            let size = desc.size() as f64 / gtk::pango::SCALE as f64;
-            (
-                desc.family().map(|f| f.to_string()),
-                if size > 0.0 { size } else { 11.0 },
-            )
-        }
-        None => (None, 11.0),
-    };
-
-    let mut families: Vec<String> = app
-        .window
-        .pango_context()
-        .list_families()
-        .iter()
-        .filter(|f| f.is_monospace())
-        .map(|f| f.name().to_string())
-        .collect();
-    families.sort_unstable_by_key(|f| f.to_lowercase());
-    // Keep a configured family selectable even if it's gone or not monospace.
-    if let Some(fam) = &cur_family {
-        if !families.contains(fam) {
-            families.insert(0, fam.clone());
-        }
-    }
-
-    let model = gtk::StringList::new(&[]);
-    model.append("System monospace");
-    for f in &families {
-        model.append(f);
-    }
-    let font_row = adw::ComboRow::builder()
-        .title("Font")
-        .model(&model)
-        .enable_search(true)
-        .expression(gtk::PropertyExpression::new(
-            gtk::StringObject::static_type(),
-            gtk::Expression::NONE,
-            "string",
-        ))
-        .build();
-    let selected = cur_family
-        .as_ref()
-        .and_then(|fam| families.iter().position(|f| f == fam))
-        .map_or(0, |i| (i + 1) as u32);
-    font_row.set_selected(selected);
-
-    let size_adj = gtk::Adjustment::new(cur_size, 6.0, 72.0, 1.0, 2.0, 0.0);
-    let size_row = adw::SpinRow::builder()
-        .title("Font size")
-        .adjustment(&size_adj)
-        .digits(0)
-        .sensitive(selected != 0)
-        .build();
-
-    let update_font = {
-        let app = app.clone();
-        let font_row = font_row.clone();
-        let size_row = size_row.clone();
-        let size_adj = size_adj.clone();
-        Rc::new(move || {
-            let sel = font_row.selected();
-            size_row.set_sensitive(sel != 0);
-            app.config.borrow_mut().font = if sel == 0 {
-                None
-            } else {
-                font_row
-                    .selected_item()
-                    .and_downcast::<gtk::StringObject>()
-                    .map(|o| format!("{} {}", o.string(), size_adj.value() as i32))
-            };
-            app.apply_terminal_config();
-            app.schedule_save();
-        })
-    };
-    {
-        let update_font = update_font.clone();
-        font_row.connect_selected_notify(move |_| update_font());
-    }
-    size_adj.connect_value_changed(move |_| update_font());
-    group.add(&font_row);
-    group.add(&size_row);
 
     let shell_row = adw::EntryRow::builder().title("Shell (empty = $SHELL)").build();
     shell_row.set_text(app.config.borrow().shell.as_deref().unwrap_or(""));
@@ -208,7 +121,7 @@ pub fn show_settings(app: &Rc<App>) {
         let app = app.clone();
         adj.connect_value_changed(move |a| {
             app.config.borrow_mut().scrollback_lines = a.value() as i64;
-            app.apply_terminal_config();
+            app.apply_terminal_settings();
             app.schedule_save();
         });
     }

@@ -84,7 +84,6 @@ pub fn build(gtk_app: &adw::Application) {
         });
         gtk_app.add_action(&act);
     }
-    app.sync_window_transparency();
     app.sync_titlebar();
     // Restore the saved sidebar visibility. Done after wire_chrome so the
     // titlebar toggle's bidirectional binding is already live and picks this
@@ -92,6 +91,7 @@ pub fn build(gtk_app: &adw::Application) {
     app.split_view.set_show_sidebar(st.config.show_sidebar);
     app.reinstall_shortcuts();
     app.install_user_css();
+    app.sync_window_transparency();
     app.watch_text_bindings();
     app.watch_user_css();
     for zs in &st.zones {
@@ -101,6 +101,9 @@ pub fn build(gtk_app: &adw::Application) {
     app.start_git_polling();
     app.save_now();
     app.window.present();
+    // Presenting resolves each terminal's CSS-derived Pango font against the
+    // display; transfer that computed font and the palette into VTE now.
+    app.apply_terminal_style();
 }
 
 impl App {
@@ -224,8 +227,10 @@ impl App {
     }
 
     /// Re-read style.css into the provider, restyling every widget live.
-    fn reload_user_css(&self) {
+    pub(crate) fn reload_user_css(&self) {
         self.style_provider.load_from_data(&style::load());
+        self.apply_terminal_style();
+        self.sync_window_transparency();
     }
 
     /// Hot-reload style.css whenever it changes on disk (mirrors the
@@ -718,19 +723,32 @@ impl App {
         all
     }
 
-    /// Re-apply font/scrollback/opacity config to every live terminal.
-    pub fn apply_terminal_config(self: &Rc<Self>) {
+    /// Re-apply non-visual terminal behavior to every live terminal.
+    pub fn apply_terminal_settings(self: &Rc<Self>) {
         let cfg = self.config.borrow().clone();
         for t in self.all_terminals() {
-            term::apply_config(&t, &cfg);
+            term::apply_settings(&t, &cfg);
         }
-        self.sync_window_transparency();
+    }
+
+    /// Re-read the visual tokens and computed terminal font from style.css
+    /// into VTE. GTK applies all other widget rules automatically.
+    fn apply_terminal_style(&self) {
+        for t in self.all_terminals() {
+            term::apply_style(&t);
+        }
     }
 
     /// The "vmux-transparent" class clears the window background so the
     /// terminal's alpha-blended background reaches the compositor.
-    pub fn sync_window_transparency(self: &Rc<Self>) {
-        if self.config.borrow().background_opacity < 1.0 {
+    #[allow(deprecated)]
+    pub fn sync_window_transparency(&self) {
+        let transparent = self
+            .window
+            .style_context()
+            .lookup_color(style::TERMINAL_BACKGROUND)
+            .is_some_and(|color| color.alpha() < 1.0);
+        if transparent {
             self.window.add_css_class("vmux-transparent");
         } else {
             self.window.remove_css_class("vmux-transparent");

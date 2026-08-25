@@ -17,7 +17,10 @@ Each **work zone** (left sidebar) is an independent workspace containing **panes
 
 Nothing is created for you: a new zone starts as a single pane with one shell tab. Split it (right/down) to add panes, open tabs per pane with the `+` button or the New Tab shortcut, and run whatever you want in them (your editor on the left, `claude` on the right, …). Closing a pane's last tab collapses the split. Tabs can be dragged between panes. A bell in a hidden zone shows an attention dot in the sidebar.
 
-The layout — zones, panes, splits, tabs, working directories, divider positions — persists across restarts in `~/.config/vmux/state.json`.
+The layout and behavioral settings persist across restarts in
+`~/.config/vmux/state.json`. Appearance is kept separately in
+`~/.config/vmux/style.css`, with reusable CSS snapshots in
+`~/.config/vmux/themes/`.
 
 ## Build & run
 
@@ -51,10 +54,15 @@ Right-click a zone in the sidebar to rename or remove it.
 
 ## Preferences
 
-The settings dialog has two pages:
+The settings dialog has three pages:
 
-- **General** — font (e.g. `JetBrainsMono Nerd Font 11`; applies live), scrollback lines, shell override (new terminals).
+- **General** — scrollback lines, shell override (new terminals), window, and notification behavior.
+- **Appearance** — quick-switch among saved themes, save the current stylesheet as a named theme, and use labeled controls for the terminal font, every terminal and ANSI color, window chrome, tab/session indicators, and Git status colors. Each control writes directly to the live-reloaded `style.css`; an Advanced row still opens the file for hand editing. Themes are complete `.css` snapshots stored in `~/.config/vmux/themes/`.
 - **Keybindings** — every action with its current shortcut; click to rebind. Assigning a combination that's in use steals it from the other action. Overrides are stored in `config.keybindings` in `state.json`.
+
+The generated stylesheet documents every terminal color token. Set terminal
+opacity by giving `vmux_terminal_background` an `rgba()` value with an alpha
+below 1.0.
 
 ### Directory tracking (OSC 7)
 

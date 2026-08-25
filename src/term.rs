@@ -8,12 +8,6 @@ use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;
 
-/// Parse a config color, falling back to the built-in default if the string
-/// is invalid (e.g. hand-edited config).
-pub fn parse_color(s: &str, fallback: &str) -> gtk::gdk::RGBA {
-    gtk::gdk::RGBA::parse(s).unwrap_or_else(|_| gtk::gdk::RGBA::parse(fallback).unwrap())
-}
-
 /// Register the custom termprops vmux-relay uses to talk back to vmux (the
 /// safe vte4 crate does not wrap the install call). vte requires these to run
 /// before the first vte::Terminal exists.
@@ -43,7 +37,12 @@ fn install_termprop(name: &str, flags: u32) {
 /// zone must be able to finalize even if a terminal is still being torn down.
 pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::ScrolledWindow {
     let term = vte::Terminal::new();
+    term.add_css_class("vmux-terminal");
     configure(&term, &app.config.borrow(), app.font_scale.get());
+    // A newly created widget may not have its final CSS-derived Pango font
+    // until it joins the mapped widget tree. Re-apply at that point so tabs
+    // opened after startup receive the configured family and size too.
+    term.connect_map(apply_style);
 
     let scrolled = gtk::ScrolledWindow::builder()
         .child(&term)
@@ -279,27 +278,46 @@ fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
     term.set_font_scale(scale);
     term.set_hexpand(true);
     term.set_vexpand(true);
-    apply_config(term, cfg);
+    apply_settings(term, cfg);
+    apply_style(term);
 }
 
-pub fn apply_config(term: &vte::Terminal, cfg: &Config) {
-    let theme = &cfg.theme;
-    let fg = parse_color(&theme.foreground, crate::state::DEFAULT_FOREGROUND);
-    let mut bg = parse_color(&theme.background, crate::state::DEFAULT_BACKGROUND);
-    bg.set_alpha(cfg.background_opacity.clamp(0.0, 1.0) as f32);
-    let palette: Vec<gtk::gdk::RGBA> = crate::state::DEFAULT_PALETTE
-        .iter()
-        .enumerate()
-        .map(|(i, def)| parse_color(theme.palette.get(i).map_or(*def, String::as_str), def))
-        .collect();
-    let refs: Vec<&gtk::gdk::RGBA> = palette.iter().collect();
-    term.set_colors(Some(&fg), Some(&bg), &refs);
-    term.set_color_cursor(Some(&parse_color(&theme.cursor, crate::state::DEFAULT_FOREGROUND)));
+pub fn apply_settings(term: &vte::Terminal, cfg: &Config) {
     term.set_scrollback_lines(cfg.scrollback_lines);
-    match &cfg.font {
-        Some(font) => term.set_font(Some(&gtk::pango::FontDescription::from_string(font))),
-        None => term.set_font(None),
+}
+
+/// Apply the terminal appearance exposed by style.css. GTK resolves the font
+/// from the `.vmux-terminal` rule; the ANSI palette and cursor are GTK named
+/// colors because VTE requires its explicit color API for those values.
+#[allow(deprecated)]
+pub fn apply_style(term: &vte::Terminal) {
+    let context = term.style_context();
+    if let Some(font) = term.pango_context().font_description() {
+        term.set_font(Some(&font));
     }
+    let foreground = context.lookup_color(crate::style::TERMINAL_FOREGROUND);
+    let background = context.lookup_color(crate::style::TERMINAL_BACKGROUND);
+    let palette: Option<Vec<gtk::gdk::RGBA>> = crate::style::TERMINAL_PALETTE
+        .iter()
+        .map(|name| context.lookup_color(name))
+        .collect();
+
+    if let Some(palette) = palette {
+        let refs: Vec<&gtk::gdk::RGBA> = palette.iter().collect();
+        term.set_colors(foreground.as_ref(), background.as_ref(), &refs);
+    } else {
+        // A partial palette is not valid in VTE. Reset it, then preserve any
+        // foreground/background tokens that were present in the stylesheet.
+        term.set_default_colors();
+        if let Some(color) = foreground.as_ref() {
+            term.set_color_foreground(color);
+        }
+        if let Some(color) = background.as_ref() {
+            term.set_color_background(color);
+        }
+    }
+    let cursor = context.lookup_color(crate::style::TERMINAL_CURSOR);
+    term.set_color_cursor(cursor.as_ref());
 }
 
 /// vte merges the supplied envv OVER the parent environment (adding
