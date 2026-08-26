@@ -61,7 +61,17 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
         let tw = term.downgrade();
         focus.connect_enter(move |_| {
             if let (Some(zone), Some(term)) = (zone.upgrade(), tw.upgrade()) {
+                if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
+                    let y = term
+                        .root()
+                        .and_then(|r| term.compute_bounds(&r))
+                        .map(|b| b.y());
+                    eprintln!("focus-enter: zone={} term={:?} y={:?}", zone.name.borrow(), term.as_ptr(), y);
+                }
                 zone.last_focused.set(Some(&term));
+                if let Some(pane) = crate::splits::pane_of(term.upcast_ref()) {
+                    crate::splits::remember_focused_pane(&pane);
+                }
             }
         });
     }

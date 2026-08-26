@@ -360,13 +360,24 @@ impl App {
         let Some(zone) = self.zones.borrow().get(idx as usize).cloned() else {
             return;
         };
-        self.stack.set_visible_child_name(&zone.stack_name());
-        zone.attention.set_visible(false);
-        self.withdraw_zone_notification(&zone);
+        // Read this before switching pages: GtkStack moves keyboard focus into
+        // the new page's first focusable child, which fires the terminal's
+        // focus-enter hook and clobbers `last_focused` with the top pane.
         let target = zone
             .last_focused
             .upgrade()
             .or_else(|| splits::first_terminal_in(zone.page.upcast_ref()));
+        if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
+            eprintln!(
+                "zone-selected: zone={} target={:?} window-focus={:?}",
+                zone.name.borrow(),
+                target.as_ref().map(|t| t.as_ptr()),
+                GtkWindowExt::focus(&self.window).map(|w| w.type_().name().to_string())
+            );
+        }
+        self.stack.set_visible_child_name(&zone.stack_name());
+        zone.attention.set_visible(false);
+        self.withdraw_zone_notification(&zone);
         if let Some(t) = target {
             term::focus_later(&t);
         }

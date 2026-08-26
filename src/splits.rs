@@ -108,9 +108,10 @@ pub enum Direction {
     Down,
 }
 
-/// Geometric directional neighbor: the pane whose center is nearest to
-/// `current`'s center in `dir`, weighing perpendicular drift double so a
-/// straight-across pane beats a closer diagonal one.
+/// Directional neighbor: the pane whose center is nearest to `current`'s
+/// center in `dir`, weighing perpendicular drift double so a straight-across
+/// pane beats a closer diagonal one — then, when that pane sits in a sibling
+/// split, the pane last focused within that split.
 pub fn neighbor_pane(root: &gtk::Widget, current: &gtk::Widget, dir: Direction) -> Option<gtk::Widget> {
     let mut panes = Vec::new();
     all_panes_in(root, &mut panes);
@@ -137,7 +138,50 @@ pub fn neighbor_pane(root: &gtk::Widget, current: &gtk::Widget, dir: Direction) 
             best = Some((score, pane));
         }
     }
-    best.map(|(_, pane)| pane)
+    best.map(|(_, pane)| remembered_in_subtree(current, &pane))
+}
+
+/// Per-split memory of the pane last focused beneath it, so that moving back
+/// into a subtree returns to where the user left off (i3/tmux behaviour)
+/// instead of whichever pane is geometrically nearest.
+const LAST_PANE_KEY: &str = "vmux-last-pane";
+
+/// Record `pane` as the most recently focused leaf of every split above it.
+pub fn remember_focused_pane(pane: &gtk::Widget) {
+    let mut cur = pane.parent();
+    while let Some(w) = cur {
+        if let Some(paned) = w.downcast_ref::<gtk::Paned>() {
+            let weak: glib::WeakRef<gtk::Widget> = pane.downgrade();
+            // SAFETY: the key is private to this module and always holds a
+            // WeakRef<gtk::Widget>; it is freed with the paned.
+            unsafe { paned.set_data(LAST_PANE_KEY, weak) };
+        }
+        cur = w.parent();
+    }
+}
+
+fn remembered_pane(paned: &gtk::Paned) -> Option<gtk::Widget> {
+    // SAFETY: see remember_focused_pane — same key, same type.
+    let weak = unsafe { paned.data::<glib::WeakRef<gtk::Widget>>(LAST_PANE_KEY)? };
+    let pane = unsafe { weak.as_ref() }.upgrade()?;
+    // Panes can be dragged elsewhere; only trust memory still under this split.
+    pane.is_ancestor(paned).then_some(pane)
+}
+
+/// `candidate` is the geometric neighbor of `current`. If it lives in a
+/// sibling subtree (a split that does not contain `current`), prefer the
+/// pane last focused in that whole subtree.
+fn remembered_in_subtree(current: &gtk::Widget, candidate: &gtk::Widget) -> gtk::Widget {
+    let mut sub = candidate.clone();
+    while let Some(parent) = sub.parent() {
+        if parent == *current || current.is_ancestor(&parent) {
+            break;
+        }
+        sub = parent;
+    }
+    sub.downcast_ref::<gtk::Paned>()
+        .and_then(remembered_pane)
+        .unwrap_or_else(|| candidate.clone())
 }
 
 /// Nearest enclosing pane root of `w` (or `w` itself).

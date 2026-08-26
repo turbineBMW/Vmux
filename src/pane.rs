@@ -57,6 +57,40 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
     stack.add_css_class(splits::PANE_CLASS);
     setup_single_tab_dnd(&stack, &tab_bar, &tab_view);
 
+    // Focus landing anywhere in this pane (tab strip, buttons) makes it the
+    // zone's current pane, even though the terminal itself never got focus.
+    // Terminals record themselves via their own controller; this covers the
+    // rest so zone switching returns to the pane the user last used.
+    {
+        let zone = zone.clone();
+        let tab_view = tab_view.clone();
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter(move |c| {
+            let Some(zone) = zone.upgrade() else { return };
+            let focus_is_terminal = c
+                .widget()
+                .and_then(|w| w.root())
+                .and_then(|r| r.focus())
+                .is_some_and(|w| w.is::<vte::Terminal>());
+            if focus_is_terminal {
+                return;
+            }
+            if let Some(t) = tab_view
+                .selected_page()
+                .and_then(|page| splits::first_terminal_in(&page.child()))
+            {
+                if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
+                    eprintln!("pane-focus: last_focused <- {:?}", t.as_ptr());
+                }
+                zone.last_focused.set(Some(&t));
+            }
+            if let Some(w) = c.widget() {
+                splits::remember_focused_pane(&w);
+            }
+        });
+        stack.add_controller(focus);
+    }
+
     {
         let app = app.clone();
         let zone = zone.clone();

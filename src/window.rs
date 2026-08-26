@@ -111,6 +111,15 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
 }
 
 pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
+    if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
+        app.window.connect_focus_widget_notify(|w| {
+            let f = gtk::prelude::GtkWindowExt::focus(w);
+            eprintln!(
+                "window-focus: {:?}",
+                f.map(|f| format!("{} {:?}", f.type_().name(), f.as_ptr()))
+            );
+        });
+    }
     {
         let app = app.clone();
         chrome.listbox.connect_row_selected(move |_, row| {
