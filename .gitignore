@@ -1,2 +1,12 @@
+# Build output
 /target
+
+# Local Claude Code settings (per-machine permissions)
 .claude/settings.local.json
+
+# Editor / OS noise
+*.swp
+*~
+.idea/
+.vscode/
+.DS_Store
