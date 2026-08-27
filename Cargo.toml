@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A minimal, low-resource zoned terminal workspace for Linux (GTK4 + libadwaita + VTE)"
 license = "MIT"
-repository = "https://github.com/turbinebmw/Vmux"
+repository = "https://github.com/turbineBMW/Vmux"
 keywords = ["terminal", "multiplexer", "gtk4", "vte"]
 categories = ["command-line-utilities"]
 
