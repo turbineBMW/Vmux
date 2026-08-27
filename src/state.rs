@@ -27,6 +27,8 @@ pub struct Config {
     pub desktop_notifications: bool,
     /// Also raise a desktop notification on the terminal bell.
     pub notify_on_bell: bool,
+    /// Which sound the notification daemon is asked to play.
+    pub notification_sound: Sound,
     /// Overrides of the default keybindings, action id -> accelerator
     /// ("" disables the binding). Defaults live in keybinds::ACTIONS.
     pub keybindings: BTreeMap<String, String>,
@@ -42,9 +44,26 @@ impl Default for Config {
             show_sidebar: true,
             desktop_notifications: true,
             notify_on_bell: false,
+            notification_sound: Sound::default(),
             keybindings: BTreeMap::new(),
         }
     }
+}
+
+/// Which sound the notification daemon is asked to play. Vmux never plays
+/// audio itself: the choice travels as a hint on the notification so the
+/// shell (and its do-not-disturb logic) stays in charge of whether anything
+/// is actually heard.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(tag = "kind", content = "path", rename_all = "kebab-case")]
+pub enum Sound {
+    /// `sound-name = message-new-instant`, resolved from the system sound theme.
+    #[default]
+    SystemDefault,
+    /// `sound-file = <path>`.
+    File(PathBuf),
+    /// `suppress-sound = true`.
+    None,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -208,6 +227,7 @@ mod tests {
         assert_eq!(cfg.scrollback_lines, 5000);
         assert!(cfg.desktop_notifications);
         assert!(!cfg.notify_on_bell);
+        assert_eq!(cfg.notification_sound, Sound::SystemDefault);
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(!json.contains("font"));
         assert!(!json.contains("background_opacity"));

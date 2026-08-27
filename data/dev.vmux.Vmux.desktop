@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Vmux
+Comment=Zoned terminal multiplexer
+Exec=vmux
+Icon=dev.vmux.Vmux
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;Utility;GTK;
+Keywords=terminal;shell;multiplexer;tmux;
+StartupNotify=true
+X-GNOME-UsesNotifications=true

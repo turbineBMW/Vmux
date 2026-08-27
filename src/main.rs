@@ -2,6 +2,7 @@ mod app;
 mod appearance;
 mod git;
 mod keybinds;
+mod notify;
 mod open_path_dialog;
 mod pane;
 mod splits;

@@ -175,6 +175,15 @@ pub fn show_settings(app: &Rc<App>) {
         });
     }
     notif_group.add(&bell_row);
+    let (sound_row, file_row) = sound_rows(app);
+    notif_group.add(&sound_row);
+    notif_group.add(&file_row);
+    let test_row = adw::ButtonRow::builder().title("Send a test notification").build();
+    {
+        let app = app.clone();
+        test_row.connect_activated(move |_| app.send_test_notification());
+    }
+    notif_group.add(&test_row);
     general.add(&notif_group);
     dialog.add(&general);
 
@@ -302,4 +311,73 @@ fn apply_binding(
     app.save_now();
     app.reinstall_shortcuts();
     refresh_labels(app, labels);
+}
+
+/// The notification sound chooser: a combo row (system default / custom
+/// file / none) plus a file row that only shows for the custom choice.
+fn sound_rows(app: &Rc<App>) -> (adw::ComboRow, adw::ActionRow) {
+    use crate::state::Sound;
+    let choices = gtk::StringList::new(&["System default", "Custom file", "None"]);
+    let sound_row = adw::ComboRow::builder()
+        .title("Sound")
+        .subtitle("Requested from the notification daemon, so do-not-disturb still applies")
+        .model(&choices)
+        .build();
+    let file_row = adw::ActionRow::builder().title("Sound file").activatable(true).build();
+    file_row.add_suffix(&gtk::Image::from_icon_name("folder-open-symbolic"));
+    let current = app.config.borrow().notification_sound.clone();
+    sound_row.set_selected(match &current {
+        Sound::SystemDefault => 0,
+        Sound::File(_) => 1,
+        Sound::None => 2,
+    });
+    if let Sound::File(p) = &current {
+        file_row.set_subtitle(&p.to_string_lossy());
+    }
+    file_row.set_visible(matches!(current, Sound::File(_)));
+    {
+        let app = app.clone();
+        let file_row = file_row.clone();
+        sound_row.connect_selected_notify(move |row| {
+            {
+                let mut cfg = app.config.borrow_mut();
+                cfg.notification_sound = match row.selected() {
+                    0 => Sound::SystemDefault,
+                    1 => match &cfg.notification_sound {
+                        Sound::File(p) => Sound::File(p.clone()),
+                        _ => Sound::File(std::path::PathBuf::new()),
+                    },
+                    _ => Sound::None,
+                };
+            }
+            file_row.set_visible(row.selected() == 1);
+            app.schedule_save();
+        });
+    }
+    {
+        let app = app.clone();
+        file_row.connect_activated(move |row| {
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Audio"));
+            filter.add_mime_type("audio/*");
+            let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            let chooser = gtk::FileDialog::builder()
+                .title("Choose a notification sound")
+                .default_filter(&filter)
+                .filters(&filters)
+                .modal(true)
+                .build();
+            let window = app.window.clone();
+            let app = app.clone();
+            let row = row.clone();
+            chooser.open(Some(&window), gtk::gio::Cancellable::NONE, move |res| {
+                let Some(path) = res.ok().and_then(|f| f.path()) else { return };
+                row.set_subtitle(&path.to_string_lossy());
+                app.config.borrow_mut().notification_sound = Sound::File(path);
+                app.schedule_save();
+            });
+        });
+    }
+    (sound_row, file_row)
 }

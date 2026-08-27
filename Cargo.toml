@@ -2,10 +2,15 @@
 name = "vmux"
 version = "0.1.0"
 edition = "2024"
+description = "A minimal, low-resource zoned terminal workspace for Linux (GTK4 + libadwaita + VTE)"
+license = "MIT"
+repository = "https://github.com/turbinebmw/Vmux"
+keywords = ["terminal", "multiplexer", "gtk4", "vte"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 gtk4 = { version = "0.11.3", features = ["v4_10"] }
-libadwaita = { version = "0.9.1", features = ["v1_5"] }
+libadwaita = { version = "0.9.1", features = ["v1_6"] }
 libc = "0.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

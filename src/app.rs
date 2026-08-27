@@ -17,6 +17,7 @@ pub struct App {
     pub sidebar_hide_btn: gtk::Button,
     pub zones: RefCell<Vec<Rc<Zone>>>,
     pub config: RefCell<state::Config>,
+    pub notifier: Option<Rc<crate::notify::Notifier>>,
     pub font_scale: Cell<f64>,
     /// Key -> bytes bindings from bindings.conf, shared by every terminal.
     pub text_bindings: RefCell<Vec<text_bindings::TextBinding>>,
@@ -51,6 +52,7 @@ pub fn build(gtk_app: &adw::Application) {
         window: chrome.window.clone(),
         split_view: chrome.split_view.clone(),
         stack: chrome.stack.clone(),
+        notifier: crate::notify::Notifier::new(),
         listbox: chrome.listbox.clone(),
         titlebar: chrome.titlebar.clone(),
         sidebar_hide_btn: chrome.sidebar_hide_btn.clone(),
@@ -68,20 +70,21 @@ pub fn build(gtk_app: &adw::Application) {
     });
     window::wire_chrome(&app, &chrome);
     // Notification clicks land here: switch to the originating zone and
-    // present the window (focus follows compositor policy via the
-    // activation token, when the notification daemon provides one).
-    {
+    // present the window. On Wayland a compositor only grants focus to a
+    // window holding a fresh xdg-activation token, which the notification
+    // daemon supplies with the click.
+    if let Some(n) = &app.notifier {
         let app = app.clone();
-        let act = gio::SimpleAction::new("focus-zone", Some(glib::VariantTy::UINT64));
-        act.connect_activate(move |_, param| {
-            let Some(id) = param.and_then(|v| v.get::<u64>()) else { return };
+        n.set_on_open(move |id, token| {
             let idx = app.zones.borrow().iter().position(|z| z.id == id);
             if let Some(idx) = idx {
                 app.select_zone(idx);
             }
+            if let Some(t) = token {
+                app.window.set_startup_id(&t);
+            }
             app.window.present();
         });
-        gtk_app.add_action(&act);
     }
     app.sync_titlebar();
     // Restore the saved sidebar visibility. Done after wire_chrome so the
@@ -480,20 +483,24 @@ impl App {
 
     /// One notification slot per zone: a newer message replaces the stale
     /// one, and selecting the zone (or refocusing the window) withdraws it.
-    /// Clicking switches to the zone via the app.focus-zone action.
+    /// Clicking switches to the zone (see the on_open hook in `build`).
     fn send_zone_notification(&self, zone: &Zone, title: &str, body: &str) {
-        let Some(gtk_app) = self.window.application() else { return };
-        let n = gio::Notification::new(title);
-        if !body.is_empty() {
-            n.set_body(Some(body));
+        if let Some(n) = &self.notifier {
+            n.send(zone.id, title, body, &self.config.borrow().notification_sound);
         }
-        n.set_default_action_and_target_value("app.focus-zone", Some(&zone.id.to_variant()));
-        gtk_app.send_notification(Some(&zone.stack_name()), &n);
     }
 
     pub fn withdraw_zone_notification(&self, zone: &Zone) {
-        if let Some(gtk_app) = self.window.application() {
-            gtk_app.withdraw_notification(&zone.stack_name());
+        if let Some(n) = &self.notifier {
+            n.close(zone.id);
+        }
+    }
+
+    /// Preferences' "Send a test notification" button.
+    pub fn send_test_notification(&self) {
+        if let Some(n) = &self.notifier {
+            let zone = self.active_zone().map(|z| z.id).unwrap_or(0);
+            n.send(zone, "Vmux", "Test notification", &self.config.borrow().notification_sound);
         }
     }
 
