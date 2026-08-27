@@ -25,6 +25,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("prev-tab", "Previous Tab", "<Control>Page_Up"),
     ("new-zone", "New Zone", "<Control><Shift>n"),
     ("close-zone", "Close Zone", "<Control><Alt>w"),
+    ("rename-zone", "Rename Zone", "<Control><Alt>r"),
     ("prev-zone", "Previous Zone", "<Control><Alt>Page_Up"),
     ("next-zone", "Next Zone", "<Control><Alt>Page_Down"),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),

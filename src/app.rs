@@ -133,6 +133,12 @@ impl App {
                 }
                 glib::Propagation::Stop
             }
+            "rename-zone" => {
+                if let Some(zone) = self.active_zone() {
+                    window::rename_zone_dialog(self, &zone);
+                }
+                glib::Propagation::Stop
+            }
             "prev-zone" => self.cycle_zone(false),
             "next-zone" => self.cycle_zone(true),
             "move-zone-up" => self.move_zone(-1),
