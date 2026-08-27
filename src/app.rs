@@ -467,8 +467,15 @@ impl App {
         if !self.config.borrow().desktop_notifications {
             return;
         }
-        let title = if title.is_empty() { zone.name.borrow().clone() } else { title.to_string() };
-        self.send_zone_notification(zone, &title, body);
+        // Name the zone in the message so a notification like "Claude is
+        // waiting for your input" says which workspace it came from.
+        let name = zone.name.borrow();
+        let (title, body) = match (title.is_empty(), body.is_empty()) {
+            (true, _) => (name.clone(), body.to_string()),
+            (false, true) => (format!("{title} on {name}"), String::new()),
+            (false, false) => (title.to_string(), format!("{body} on {name}")),
+        };
+        self.send_zone_notification(zone, &title, &body);
     }
 
     /// One notification slot per zone: a newer message replaces the stale
