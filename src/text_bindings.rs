@@ -83,7 +83,11 @@ pub fn parse_str(text: &str) -> Vec<TextBinding> {
             warn(i, &format!("unrecognized key combo {:?}", combo.trim()));
             continue;
         };
-        out.push(TextBinding { key, mods, bytes: unescape(value.trim()) });
+        out.push(TextBinding {
+            key,
+            mods,
+            bytes: unescape(value.trim()),
+        });
     }
     out
 }

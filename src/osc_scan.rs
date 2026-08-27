@@ -117,7 +117,10 @@ enum State {
     /// continuation byte, and real emitters use 7-bit `ESC ]`.
     Esc,
     /// Inside `ESC ]`, collecting the numeric OSC code.
-    OscNum { num: u32, digits: u8 },
+    OscNum {
+        num: u32,
+        digits: u8,
+    },
     /// Collecting the payload of an OSC 9/777/99 (code in `Scanner::code`).
     OscPayload,
     OscPayloadEsc,
@@ -307,7 +310,11 @@ impl Scanner {
             }
         };
         let acc = &mut self.kitty[idx].1;
-        let field = if field_is_body { &mut acc.body } else { &mut acc.title };
+        let field = if field_is_body {
+            &mut acc.body
+        } else {
+            &mut acc.title
+        };
         let room = KITTY_FIELD_CAP.saturating_sub(field.len());
         field.extend_from_slice(&content[..content.len().min(room)]);
         if !done {
@@ -370,18 +377,34 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn base64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(B64[(n >> 18) as usize & 63] as char);
         out.push(B64[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            B64[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
 
 fn base64_decode(data: &[u8]) -> Option<Vec<u8>> {
-    let data: Vec<u8> = data.iter().copied().filter(|&b| b != b'\n' && b != b'\r').collect();
+    let data: Vec<u8> = data
+        .iter()
+        .copied()
+        .filter(|&b| b != b'\n' && b != b'\r')
+        .collect();
     let data = match data.iter().position(|&b| b == b'=') {
         Some(p) if p + (data.len() - p) <= data.len() && data[p..].iter().all(|&b| b == b'=') => {
             &data[..p]
@@ -416,7 +439,10 @@ mod tests {
     use super::*;
 
     fn notif(title: &str, body: &str) -> Notification {
-        Notification { title: title.into(), body: body.into() }
+        Notification {
+            title: title.into(),
+            body: body.into(),
+        }
     }
 
     /// Feed the bytes in one piece and return (offset, notification) pairs.
@@ -443,8 +469,14 @@ mod tests {
 
     #[test]
     fn osc9_bel_and_st() {
-        assert_eq!(assert_split_stable(b"ab\x1b]9;hello\x07cd"), vec![notif("", "hello")]);
-        assert_eq!(assert_split_stable(b"ab\x1b]9;hello\x1b\\cd"), vec![notif("", "hello")]);
+        assert_eq!(
+            assert_split_stable(b"ab\x1b]9;hello\x07cd"),
+            vec![notif("", "hello")]
+        );
+        assert_eq!(
+            assert_split_stable(b"ab\x1b]9;hello\x1b\\cd"),
+            vec![notif("", "hello")]
+        );
     }
 
     #[test]
@@ -480,18 +512,25 @@ mod tests {
 
     #[test]
     fn osc99_defaults_title() {
-        assert_eq!(assert_split_stable(b"\x1b]99;;hello\x1b\\"), vec![notif("hello", "")]);
+        assert_eq!(
+            assert_split_stable(b"\x1b]99;;hello\x1b\\"),
+            vec![notif("hello", "")]
+        );
     }
 
     #[test]
     fn osc99_multi_part() {
         let bytes = b"\x1b]99;i=1:d=0;The Title\x1b\\mid\x1b]99;i=1:d=1:p=body;The Body\x1b\\";
-        assert_eq!(assert_split_stable(bytes), vec![notif("The Title", "The Body")]);
+        assert_eq!(
+            assert_split_stable(bytes),
+            vec![notif("The Title", "The Body")]
+        );
     }
 
     #[test]
     fn osc99_ids_are_independent() {
-        let bytes = b"\x1b]99;i=a:d=0;A\x1b\\\x1b]99;i=b:d=1;B\x1b\\\x1b]99;i=a:d=1:p=body;abody\x1b\\";
+        let bytes =
+            b"\x1b]99;i=a:d=0;A\x1b\\\x1b]99;i=b:d=1;B\x1b\\\x1b]99;i=a:d=1:p=body;abody\x1b\\";
         assert_eq!(
             assert_split_stable(bytes),
             vec![notif("B", ""), notif("A", "abody")]
@@ -514,7 +553,8 @@ mod tests {
         assert!(collect(b"\x1b]99;i=1:p=?;\x1b\\").is_empty());
         assert!(collect(b"\x1b]99;i=1:p=close;\x1b\\").is_empty());
         // A close even forgets accumulated parts for that id.
-        let bytes = b"\x1b]99;i=1:d=0;part\x1b\\\x1b]99;i=1:p=close;\x1b\\\x1b]99;i=1:d=1:p=body;b\x1b\\";
+        let bytes =
+            b"\x1b]99;i=1:d=0;part\x1b\\\x1b]99;i=1:p=close;\x1b\\\x1b]99;i=1:d=1:p=body;b\x1b\\";
         assert_eq!(collect(bytes).len(), 1);
         assert_eq!(collect(bytes)[0].1, notif("", "b"));
     }
@@ -632,7 +672,10 @@ mod tests {
         assert_eq!(parse_fgproc_payload(b"ssh"), ("ssh".into(), None));
         assert_eq!(parse_fgproc_payload(b"ssh\x1f0"), ("ssh".into(), Some(0)));
         // Garbage after the separator: fall back to treating it all as name.
-        assert_eq!(parse_fgproc_payload(b"ssh\x1fx"), ("ssh\u{1f}x".into(), None));
+        assert_eq!(
+            parse_fgproc_payload(b"ssh\x1fx"),
+            ("ssh\u{1f}x".into(), None)
+        );
         // Only the LAST separator splits; earlier ones stay in the name.
         assert_eq!(
             parse_fgproc_payload(b"a\x1fb\x1f42"),

@@ -94,7 +94,10 @@ impl Zone {
             .page
             .child()
             .map(|c| snapshot_node(&c, &self.cwd))
-            .unwrap_or(state::NodeState::Pane { tabs: Vec::new(), active_tab: 0 });
+            .unwrap_or(state::NodeState::Pane {
+                tabs: Vec::new(),
+                active_tab: 0,
+            });
         state::ZoneState {
             name: self.name.borrow().clone(),
             cwd: self.cwd.clone(),
@@ -170,9 +173,7 @@ fn restore_node(app: &Rc<App>, zone: &Rc<Zone>, node: &state::NodeState) -> gtk:
 
 fn snapshot_node(w: &gtk::Widget, fallback_cwd: &str) -> state::NodeState {
     if let Some(paned) = w.downcast_ref::<gtk::Paned>() {
-        let first = paned
-            .start_child()
-            .map(|c| snapshot_node(&c, fallback_cwd));
+        let first = paned.start_child().map(|c| snapshot_node(&c, fallback_cwd));
         let second = paned.end_child().map(|c| snapshot_node(&c, fallback_cwd));
         return match (first, second) {
             (Some(first), Some(second)) => state::NodeState::Split {
@@ -186,7 +187,10 @@ fn snapshot_node(w: &gtk::Widget, fallback_cwd: &str) -> state::NodeState {
                 second: Box::new(second),
             },
             (Some(only), None) | (None, Some(only)) => only,
-            (None, None) => state::NodeState::Pane { tabs: Vec::new(), active_tab: 0 },
+            (None, None) => state::NodeState::Pane {
+                tabs: Vec::new(),
+                active_tab: 0,
+            },
         };
     }
     if w.has_css_class(splits::PANE_CLASS)
@@ -211,5 +215,8 @@ fn snapshot_node(w: &gtk::Widget, fallback_cwd: &str) -> state::NodeState {
             .unwrap_or(0);
         return state::NodeState::Pane { tabs, active_tab };
     }
-    state::NodeState::Pane { tabs: Vec::new(), active_tab: 0 }
+    state::NodeState::Pane {
+        tabs: Vec::new(),
+        active_tab: 0,
+    }
 }

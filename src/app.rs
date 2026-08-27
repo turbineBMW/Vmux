@@ -152,7 +152,8 @@ impl App {
             "font-dec" => self.adjust_font_scale(Some(-0.1)),
             "font-reset" => self.adjust_font_scale(None),
             "toggle-sidebar" => {
-                self.split_view.set_show_sidebar(!self.split_view.shows_sidebar());
+                self.split_view
+                    .set_show_sidebar(!self.split_view.shows_sidebar());
                 glib::Propagation::Stop
             }
             "preferences" => {
@@ -207,7 +208,10 @@ impl App {
                 *self.bindings_monitor.borrow_mut() = Some(monitor);
             }
             Err(e) => {
-                eprintln!("vmux: cannot watch {}: {e}", text_bindings::path().display());
+                eprintln!(
+                    "vmux: cannot watch {}: {e}",
+                    text_bindings::path().display()
+                );
             }
         }
     }
@@ -225,12 +229,13 @@ impl App {
         }
         // Surface parse errors to the log rather than silently dropping the
         // offending rule (GTK keeps applying the valid remainder).
-        self.style_provider.connect_parsing_error(|_, section, err| {
-            eprintln!(
-                "vmux: style.css line {}: {err}",
-                section.start_location().lines() + 1
-            );
-        });
+        self.style_provider
+            .connect_parsing_error(|_, section, err| {
+                eprintln!(
+                    "vmux: style.css line {}: {err}",
+                    section.start_location().lines() + 1
+                );
+            });
         self.reload_user_css();
     }
 
@@ -330,7 +335,11 @@ impl App {
             .selected_row()
             .map(|r| r.index().max(0) as usize)
             .unwrap_or(0);
-        let idx = if next { (cur + 1) % len } else { (cur + len - 1) % len };
+        let idx = if next {
+            (cur + 1) % len
+        } else {
+            (cur + len - 1) % len
+        };
         self.select_zone(idx);
         glib::Propagation::Stop
     }
@@ -486,7 +495,12 @@ impl App {
     /// Clicking switches to the zone (see the on_open hook in `build`).
     fn send_zone_notification(&self, zone: &Zone, title: &str, body: &str) {
         if let Some(n) = &self.notifier {
-            n.send(zone.id, title, body, &self.config.borrow().notification_sound);
+            n.send(
+                zone.id,
+                title,
+                body,
+                &self.config.borrow().notification_sound,
+            );
         }
     }
 
@@ -500,7 +514,12 @@ impl App {
     pub fn send_test_notification(&self) {
         if let Some(n) = &self.notifier {
             let zone = self.active_zone().map(|z| z.id).unwrap_or(0);
-            n.send(zone, "Vmux", "Test notification", &self.config.borrow().notification_sound);
+            n.send(
+                zone,
+                "Vmux",
+                "Test notification",
+                &self.config.borrow().notification_sound,
+            );
         }
     }
 
@@ -538,20 +557,19 @@ impl App {
     fn sweep_drag_emptied(self: &Rc<Self>) {
         let entries = self.drag_emptied.take();
         for e in entries {
-            let Some(pane) = e.pane.upgrade() else { continue };
+            let Some(pane) = e.pane.upgrade() else {
+                continue;
+            };
             if pane.root().is_none() {
                 continue; // torn down while the drag was in flight
             }
-            let still_empty = pane::tab_view_of(pane.upcast_ref())
-                .is_none_or(|v| v.n_pages() == 0);
+            let still_empty = pane::tab_view_of(pane.upcast_ref()).is_none_or(|v| v.n_pages() == 0);
             if still_empty {
                 // Keep the pane alive past the drag's async dnd-finished:
                 // adw's tab box only disconnects its GdkDrag handlers in
                 // drag_end, which on Wayland can arrive after this idle.
                 let keep = pane.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || {
-                    drop(keep)
-                });
+                glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || drop(keep));
                 pane::collapse_empty_pane(self, &pane, &e.zone);
                 self.schedule_save();
             }
@@ -602,8 +620,7 @@ impl App {
         let cwd = self.focused_terminal().and_then(|t| term::cwd_of(&t));
         let new_pane = pane::build_pane(self, &Rc::downgrade(&zone));
         pane::new_tab(self, &zone, &new_pane, cwd);
-        if let Some(paned) =
-            splits::split_leaf(p.upcast_ref(), new_pane.upcast_ref(), orientation)
+        if let Some(paned) = splits::split_leaf(p.upcast_ref(), new_pane.upcast_ref(), orientation)
         {
             self.watch_paned(&paned);
         }

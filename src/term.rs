@@ -12,7 +12,10 @@ use vte4::prelude::*;
 /// before the first vte::Terminal exists.
 pub fn install_notify_termprop() {
     // Ephemeral: the notification value is only readable inside its handler.
-    install_termprop(vmux::osc_scan::TERMPROP_NAME, vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL);
+    install_termprop(
+        vmux::osc_scan::TERMPROP_NAME,
+        vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL,
+    );
 }
 
 /// Register the termprop carrying the foreground command for tab titles.
@@ -24,8 +27,9 @@ pub fn install_fgproc_termprop() {
 
 fn install_termprop(name: &str, flags: u32) {
     let cname = std::ffi::CString::new(name).unwrap();
-    let id =
-        unsafe { vte::ffi::vte_install_termprop(cname.as_ptr(), vte::ffi::VTE_PROPERTY_DATA, flags) };
+    let id = unsafe {
+        vte::ffi::vte_install_termprop(cname.as_ptr(), vte::ffi::VTE_PROPERTY_DATA, flags)
+    };
     if id < 0 {
         eprintln!("vmux: failed to install termprop {name}");
     }
@@ -66,7 +70,12 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
                         .root()
                         .and_then(|r| term.compute_bounds(&r))
                         .map(|b| b.y());
-                    eprintln!("focus-enter: zone={} term={:?} y={:?}", zone.name.borrow(), term.as_ptr(), y);
+                    eprintln!(
+                        "focus-enter: zone={} term={:?} y={:?}",
+                        zone.name.borrow(),
+                        term.as_ptr(),
+                        y
+                    );
                 }
                 zone.last_focused.set(Some(&term));
                 if let Some(pane) = crate::splits::pane_of(term.upcast_ref()) {
@@ -340,7 +349,13 @@ pub fn apply_style(term: &vte::Terminal) {
 /// notification OSCs; without it the shell still works, just without
 /// desktop notifications.
 pub fn spawn_argv(term: &vte::Terminal, cwd: &str, argv: &[String]) {
-    const SCRUB: &[&str] = &["TERM", "TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
+    const SCRUB: &[&str] = &[
+        "TERM",
+        "TMUX",
+        "TMUX_PANE",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+    ];
     let mut env: Vec<String> = std::env::vars()
         .filter(|(k, _)| !SCRUB.contains(&k.as_str()))
         .map(|(k, v)| format!("{k}={v}"))
@@ -356,7 +371,10 @@ pub fn spawn_argv(term: &vte::Terminal, cwd: &str, argv: &[String]) {
             spawn_with_env(term, cwd, wrapped, env, Some(argv.to_vec()));
         }
         None => {
-            feed_line(term, "[vmux] vmux-relay not found; desktop notifications disabled");
+            feed_line(
+                term,
+                "[vmux] vmux-relay not found; desktop notifications disabled",
+            );
             spawn_with_env(term, cwd, argv.to_vec(), env, None);
         }
     }

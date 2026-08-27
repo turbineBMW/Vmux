@@ -324,15 +324,39 @@ mod tests {
     /// The colored segments must reproduce format_summary's exact text (spacing
     /// included) when concatenated, so coloring never shifts the layout.
     fn joined(s: &GitSummary) -> String {
-        summary_segments(s).iter().map(|seg| seg.text.as_str()).collect()
+        summary_segments(s)
+            .iter()
+            .map(|seg| seg.text.as_str())
+            .collect()
     }
 
     #[test]
     fn segments_round_trip_to_format() {
         for s in [
-            GitSummary { added: 2, modified: 5, deleted: 1, insertions: 128, deletions: 34, ahead: 3 },
-            GitSummary { added: 0, modified: 1, deleted: 0, insertions: 4, deletions: 0, ahead: 0 },
-            GitSummary { added: 0, modified: 0, deleted: 0, insertions: 0, deletions: 0, ahead: 2 },
+            GitSummary {
+                added: 2,
+                modified: 5,
+                deleted: 1,
+                insertions: 128,
+                deletions: 34,
+                ahead: 3,
+            },
+            GitSummary {
+                added: 0,
+                modified: 1,
+                deleted: 0,
+                insertions: 4,
+                deletions: 0,
+                ahead: 0,
+            },
+            GitSummary {
+                added: 0,
+                modified: 0,
+                deleted: 0,
+                insertions: 0,
+                deletions: 0,
+                ahead: 2,
+            },
         ] {
             assert_eq!(joined(&s), format_summary(&s));
         }
@@ -340,17 +364,38 @@ mod tests {
 
     #[test]
     fn segments_tag_each_token_with_a_class() {
-        let s = GitSummary { added: 2, modified: 5, deleted: 1, insertions: 128, deletions: 34, ahead: 3 };
+        let s = GitSummary {
+            added: 2,
+            modified: 5,
+            deleted: 1,
+            insertions: 128,
+            deletions: 34,
+            ahead: 3,
+        };
         let classes: Vec<&str> = summary_segments(&s).iter().map(|seg| seg.class).collect();
         assert_eq!(
             classes,
-            ["git-added", "git-modified", "git-deleted", "git-lines-added", "git-lines-del", "git-ahead"]
+            [
+                "git-added",
+                "git-modified",
+                "git-deleted",
+                "git-lines-added",
+                "git-lines-del",
+                "git-ahead"
+            ]
         );
     }
 
     #[test]
     fn segments_clean_repo_is_single_check() {
-        let s = GitSummary { added: 0, modified: 0, deleted: 0, insertions: 0, deletions: 0, ahead: 0 };
+        let s = GitSummary {
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            insertions: 0,
+            deletions: 0,
+            ahead: 0,
+        };
         let segs = summary_segments(&s);
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].text, "✓");

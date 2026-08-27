@@ -15,7 +15,7 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicI32, Ordering};
-use vmux::osc_scan::{encode_fgproc_termprop, encode_termprop, Scanner};
+use vmux::osc_scan::{Scanner, encode_fgproc_termprop, encode_termprop};
 
 /// Self-pipe write end for the SIGWINCH/SIGCHLD handler.
 static SELF_PIPE_W: AtomicI32 = AtomicI32::new(-1);
@@ -234,7 +234,11 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     'outer: loop {
         let mut fds: Vec<libc::pollfd> = Vec::with_capacity(4);
         let mut push = |fd: i32, events: libc::c_short| {
-            fds.push(libc::pollfd { fd, events, revents: 0 });
+            fds.push(libc::pollfd {
+                fd,
+                events,
+                revents: 0,
+            });
             fds.len() - 1
         };
         let pipe_idx = push(pipe_r, libc::POLLIN);
@@ -387,7 +391,11 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
         if status.is_none() {
             let pg = unsafe { libc::tcgetpgrp(master) };
             if pg != last_pgid {
-                let name = if pg == child { Some(String::new()) } else { fg_name(pg) };
+                let name = if pg == child {
+                    Some(String::new())
+                } else {
+                    fg_name(pg)
+                };
                 if let Some(name) = name {
                     last_pgid = pg;
                     // Uid read failure doesn't retry like a name failure: a
@@ -442,7 +450,11 @@ fn flush_blocking(fd: i32, mut buf: &[u8]) {
         if buf.is_empty() {
             return;
         }
-        let mut pfd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
         unsafe { libc::poll(&mut pfd, 1, 20) };
         match write_fd(fd, buf) {
             IoRes::Done(n) => buf = &buf[n..],

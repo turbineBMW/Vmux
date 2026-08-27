@@ -71,7 +71,9 @@ impl Notifier {
     }
 
     fn on_signal(&self, name: &str, params: &glib::Variant) {
-        let Some(id) = params.child_value(0).get::<u32>() else { return };
+        let Some(id) = params.child_value(0).get::<u32>() else {
+            return;
+        };
         match name {
             "ActivationToken" => {
                 if let Some(t) = params.child_value(1).get::<String>() {
@@ -116,22 +118,46 @@ impl Notifier {
                 hints.insert("sound-name".into(), "message-new-instant".to_variant());
             }
             Sound::File(p) => {
-                hints.insert("sound-file".into(), p.to_string_lossy().as_ref().to_variant());
+                hints.insert(
+                    "sound-file".into(),
+                    p.to_string_lossy().as_ref().to_variant(),
+                );
             }
             Sound::None => {
                 hints.insert("suppress-sound".into(), true.to_variant());
             }
         }
-        let args = (APP_NAME, replaces, icon.as_str(), title, body, actions, hints, -1i32).to_variant();
+        let args = (
+            APP_NAME,
+            replaces,
+            icon.as_str(),
+            title,
+            body,
+            actions,
+            hints,
+            -1i32,
+        )
+            .to_variant();
         let me = self.clone();
         glib::spawn_future_local(async move {
             match me
                 .conn
-                .call_future(Some(BUS), PATH, BUS, "Notify", Some(&args), None, gio::DBusCallFlags::NONE, 5000)
+                .call_future(
+                    Some(BUS),
+                    PATH,
+                    BUS,
+                    "Notify",
+                    Some(&args),
+                    None,
+                    gio::DBusCallFlags::NONE,
+                    5000,
+                )
                 .await
             {
                 Ok(r) => {
-                    let Some(id) = r.child_value(0).get::<u32>() else { return };
+                    let Some(id) = r.child_value(0).get::<u32>() else {
+                        return;
+                    };
                     if replaces != 0 && replaces != id {
                         me.zone_of.borrow_mut().remove(&replaces);
                     }
@@ -145,7 +171,9 @@ impl Notifier {
 
     /// Withdraw the zone's notification, if one is showing.
     pub fn close(&self, zone: u64) {
-        let Some(id) = self.by_zone.borrow_mut().remove(&zone) else { return };
+        let Some(id) = self.by_zone.borrow_mut().remove(&zone) else {
+            return;
+        };
         self.zone_of.borrow_mut().remove(&id);
         self.tokens.borrow_mut().remove(&id);
         self.conn.call(
@@ -167,7 +195,9 @@ impl Notifier {
 /// that), else the theme name for the daemon to resolve itself.
 fn app_icon() -> String {
     let user = glib::user_data_dir().join(format!("icons/hicolor/128x128/apps/{DESKTOP_ID}.png"));
-    let system = std::path::PathBuf::from(format!("/usr/share/icons/hicolor/128x128/apps/{DESKTOP_ID}.png"));
+    let system = std::path::PathBuf::from(format!(
+        "/usr/share/icons/hicolor/128x128/apps/{DESKTOP_ID}.png"
+    ));
     [user, system]
         .into_iter()
         .find(|p| p.exists())

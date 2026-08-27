@@ -100,7 +100,9 @@ pub fn build_pane(app: &Rc<App>, zone: &Weak<Zone>) -> gtk::Stack {
                 let cwd = z
                     .last_focused
                     .upgrade()
-                    .filter(|t| splits::pane_of(t.upcast_ref()).as_ref() == Some(stack.upcast_ref()))
+                    .filter(|t| {
+                        splits::pane_of(t.upcast_ref()).as_ref() == Some(stack.upcast_ref())
+                    })
                     .and_then(|t| term::cwd_of(&t));
                 new_tab(&app, &z, &stack, cwd);
             }
@@ -257,10 +259,7 @@ fn setup_single_tab_dnd(stack: &gtk::Stack, tab_bar: &adw::TabBar, tab_view: &ad
 /// on a tab drag tear-off.
 pub(crate) fn collapse_empty_pane(app: &Rc<App>, stack: &gtk::Stack, zone: &Weak<Zone>) {
     let pane: gtk::Widget = stack.clone().upcast();
-    let in_split = pane
-        .parent()
-        .map(|p| p.is::<gtk::Paned>())
-        .unwrap_or(false);
+    let in_split = pane.parent().map(|p| p.is::<gtk::Paned>()).unwrap_or(false);
     if in_split {
         if let Some(promoted) = splits::collapse_leaf(&pane)
             && let Some(t) = splits::first_terminal_in(&promoted)
@@ -377,9 +376,15 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
 /// Close the tab that contains `terminal` (the pane collapses automatically
 /// when its last tab goes, via page-detached).
 pub fn close_tab_of(terminal: &vte::Terminal) {
-    let Some(leaf) = terminal.parent() else { return };
-    let Some(pane) = splits::pane_of(&leaf) else { return };
-    let Some(view) = tab_view_of(&pane) else { return };
+    let Some(leaf) = terminal.parent() else {
+        return;
+    };
+    let Some(pane) = splits::pane_of(&leaf) else {
+        return;
+    };
+    let Some(view) = tab_view_of(&pane) else {
+        return;
+    };
     for i in 0..view.n_pages() {
         let page = view.nth_page(i);
         if page.child() == leaf {

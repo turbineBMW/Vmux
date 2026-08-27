@@ -112,7 +112,11 @@ pub enum Direction {
 /// center in `dir`, weighing perpendicular drift double so a straight-across
 /// pane beats a closer diagonal one — then, when that pane sits in a sibling
 /// split, the pane last focused within that split.
-pub fn neighbor_pane(root: &gtk::Widget, current: &gtk::Widget, dir: Direction) -> Option<gtk::Widget> {
+pub fn neighbor_pane(
+    root: &gtk::Widget,
+    current: &gtk::Widget,
+    dir: Direction,
+) -> Option<gtk::Widget> {
     let mut panes = Vec::new();
     all_panes_in(root, &mut panes);
     let cur = current.compute_bounds(root)?;
@@ -122,7 +126,9 @@ pub fn neighbor_pane(root: &gtk::Widget, current: &gtk::Widget, dir: Direction) 
         if pane == *current {
             continue;
         }
-        let Some(b) = pane.compute_bounds(root) else { continue };
+        let Some(b) = pane.compute_bounds(root) else {
+            continue;
+        };
         let (px, py) = (b.x() + b.width() / 2.0, b.y() + b.height() / 2.0);
         let (forward, drift) = match dir {
             Direction::Left => (cx - px, (py - cy).abs()),
@@ -208,7 +214,10 @@ fn replace_in_slot(slot: &gtk::Widget, old: &gtk::Widget, new: &gtk::Widget) {
             paned.set_end_child(Some(new));
         }
     } else {
-        eprintln!("vmux: replace_in_slot: unexpected slot type {}", slot.type_());
+        eprintln!(
+            "vmux: replace_in_slot: unexpected slot type {}",
+            slot.type_()
+        );
     }
 }
 
@@ -265,7 +274,11 @@ pub fn new_split_paned(orientation: gtk::Orientation, ratio: f64) -> gtk::Paned 
 
 /// Split `leaf` in two: its slot gets a new Paned holding {leaf, new_leaf}.
 /// Returns the new paned so the caller can wire save-on-resize.
-pub fn split_leaf(leaf: &gtk::Widget, new_leaf: &gtk::Widget, orientation: gtk::Orientation) -> Option<gtk::Paned> {
+pub fn split_leaf(
+    leaf: &gtk::Widget,
+    new_leaf: &gtk::Widget,
+    orientation: gtk::Orientation,
+) -> Option<gtk::Paned> {
     let slot = leaf.parent()?;
     let paned = new_split_paned(orientation, 0.5);
     // Putting the paned into the slot unparents the leaf; then re-home both.

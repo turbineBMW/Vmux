@@ -213,11 +213,13 @@ pub fn new_zone_dialog(app: &Rc<App>) {
             app.add_zone(&state::display_name(&cwd), &cwd);
         })
     };
-    crate::open_path_dialog::present_open_path_dialog(crate::open_path_dialog::OpenPathDialogInput {
-        parent: app.window.clone().upcast(),
-        initial_directory: std::path::PathBuf::from(state::home_dir()),
-        on_open,
-    });
+    crate::open_path_dialog::present_open_path_dialog(
+        crate::open_path_dialog::OpenPathDialogInput {
+            parent: app.window.clone().upcast(),
+            initial_directory: std::path::PathBuf::from(state::home_dir()),
+            on_open,
+        },
+    );
 }
 
 pub fn rename_zone_dialog(app: &Rc<App>, zone: &Rc<Zone>) {

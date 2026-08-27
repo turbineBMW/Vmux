@@ -16,7 +16,11 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("split-down", "Split Pane Down", "<Control><Shift>o"),
     ("focus-next-pane", "Focus Next Pane", "<Control><Shift>a"),
     ("focus-pane-left", "Focus Pane Left", "<Control><Alt>Left"),
-    ("focus-pane-right", "Focus Pane Right", "<Control><Alt>Right"),
+    (
+        "focus-pane-right",
+        "Focus Pane Right",
+        "<Control><Alt>Right",
+    ),
     ("focus-pane-up", "Focus Pane Up", "<Control><Alt>Up"),
     ("focus-pane-down", "Focus Pane Down", "<Control><Alt>Down"),
     ("grow-pane", "Grow Pane", "<Control><Shift>equal"),
@@ -29,7 +33,11 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("prev-zone", "Previous Zone", "<Control><Alt>Page_Up"),
     ("next-zone", "Next Zone", "<Control><Alt>Page_Down"),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
-    ("move-zone-down", "Move Zone Down", "<Control><Shift>Page_Down"),
+    (
+        "move-zone-down",
+        "Move Zone Down",
+        "<Control><Shift>Page_Down",
+    ),
     ("copy", "Copy", "<Control><Shift>c"),
     ("paste", "Paste", "<Control><Shift>v"),
     ("font-inc", "Increase Font Size", "<Control>equal"),
@@ -68,7 +76,11 @@ pub fn pretty_accel(accel: &str) -> String {
     }
 }
 
-pub fn add_sc(ctl: &gtk::ShortcutController, trig: &str, f: impl Fn() -> glib::Propagation + 'static) {
+pub fn add_sc(
+    ctl: &gtk::ShortcutController,
+    trig: &str,
+    f: impl Fn() -> glib::Propagation + 'static,
+) {
     let action = gtk::CallbackAction::new(move |_, _| f());
     if let Some(trigger) = gtk::ShortcutTrigger::parse_string(trig) {
         ctl.add_shortcut(gtk::Shortcut::new(Some(trigger), Some(action)));
@@ -91,7 +103,9 @@ pub fn show_settings(app: &Rc<App>) {
     let group = adw::PreferencesGroup::new();
     group.set_title("Terminal");
 
-    let shell_row = adw::EntryRow::builder().title("Shell (empty = $SHELL)").build();
+    let shell_row = adw::EntryRow::builder()
+        .title("Shell (empty = $SHELL)")
+        .build();
     shell_row.set_text(app.config.borrow().shell.as_deref().unwrap_or(""));
     shell_row.set_show_apply_button(true);
     {
@@ -178,7 +192,9 @@ pub fn show_settings(app: &Rc<App>) {
     let (sound_row, file_row) = sound_rows(app);
     notif_group.add(&sound_row);
     notif_group.add(&file_row);
-    let test_row = adw::ButtonRow::builder().title("Send a test notification").build();
+    let test_row = adw::ButtonRow::builder()
+        .title("Send a test notification")
+        .build();
     {
         let app = app.clone();
         test_row.connect_activated(move |_| app.send_test_notification());
@@ -202,7 +218,10 @@ pub fn show_settings(app: &Rc<App>) {
 
     let labels: Rc<RefCell<Vec<(String, gtk::ShortcutLabel)>>> = Rc::new(RefCell::new(Vec::new()));
     for (id, title, accel) in merged(&app.config.borrow()) {
-        let row = adw::ActionRow::builder().title(&title).activatable(true).build();
+        let row = adw::ActionRow::builder()
+            .title(&title)
+            .activatable(true)
+            .build();
         let label = gtk::ShortcutLabel::new(&accel);
         label.set_disabled_text("unbound");
         label.set_valign(gtk::Align::Center);
@@ -306,7 +325,8 @@ fn apply_binding(
                 }
             }
         }
-        cfg.keybindings.insert(action_id.to_string(), accel.to_string());
+        cfg.keybindings
+            .insert(action_id.to_string(), accel.to_string());
     }
     app.save_now();
     app.reinstall_shortcuts();
@@ -323,7 +343,10 @@ fn sound_rows(app: &Rc<App>) -> (adw::ComboRow, adw::ActionRow) {
         .subtitle("Requested from the notification daemon, so do-not-disturb still applies")
         .model(&choices)
         .build();
-    let file_row = adw::ActionRow::builder().title("Sound file").activatable(true).build();
+    let file_row = adw::ActionRow::builder()
+        .title("Sound file")
+        .activatable(true)
+        .build();
     file_row.add_suffix(&gtk::Image::from_icon_name("folder-open-symbolic"));
     let current = app.config.borrow().notification_sound.clone();
     sound_row.set_selected(match &current {
@@ -372,7 +395,9 @@ fn sound_rows(app: &Rc<App>) -> (adw::ComboRow, adw::ActionRow) {
             let app = app.clone();
             let row = row.clone();
             chooser.open(Some(&window), gtk::gio::Cancellable::NONE, move |res| {
-                let Some(path) = res.ok().and_then(|f| f.path()) else { return };
+                let Some(path) = res.ok().and_then(|f| f.path()) else {
+                    return;
+                };
                 row.set_subtitle(&path.to_string_lossy());
                 app.config.borrow_mut().notification_sound = Sound::File(path);
                 app.schedule_save();

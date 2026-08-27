@@ -13,9 +13,9 @@ mod text_bindings;
 mod window;
 mod zone;
 
+use gtk::prelude::*;
 use gtk4 as gtk;
 use gtk4::glib;
-use gtk::prelude::*;
 use libadwaita as adw;
 
 const APP_ID: &str = "dev.vmux.Vmux";

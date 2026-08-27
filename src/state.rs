@@ -123,11 +123,16 @@ impl ZoneState {
             return root.clone();
         }
         let tabs = if self.tabs.is_empty() {
-            vec![TabState { cwd: self.cwd.clone() }]
+            vec![TabState {
+                cwd: self.cwd.clone(),
+            }]
         } else {
             self.tabs.clone()
         };
-        NodeState::Pane { tabs, active_tab: 0 }
+        NodeState::Pane {
+            tabs,
+            active_tab: 0,
+        }
     }
 }
 
