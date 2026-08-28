@@ -91,14 +91,18 @@ Defaults:
 | `Ctrl+Alt+W` | Close zone |
 | `Ctrl+Alt+R` | Rename zone |
 | `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Previous / next zone |
+| `Ctrl+Alt+L` | Flip to the last focused zone |
 | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move zone up / down in the sidebar |
-| `Alt+1`…`Alt+9` | Switch to zone N (fixed) |
+| `Alt+1`…`Alt+9`, `Ctrl+Alt+1`…`Ctrl+Alt+0` | Switch to zone N (fixed; `0` is the tenth) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Font scale |
 | `F9` | Toggle sidebar |
 | `Ctrl+,` | Preferences |
 
-Right-click a zone in the sidebar to rename or remove it.
+Right-click a zone in the sidebar to rename or remove it. Each zone shows a
+picture chip — the name's initials by default; right-click the chip to choose
+an image file or go back to initials — and a number chip giving its position,
+matching the `Alt+N` shortcuts.
 
 ## Preferences
 

@@ -23,6 +23,9 @@ pub struct App {
     pub text_bindings: RefCell<Vec<text_bindings::TextBinding>>,
     save_source: RefCell<Option<glib::SourceId>>,
     next_zone_id: Cell<u64>,
+    /// (current, previous) selected zone ids, for "last zone". Ids rather
+    /// than indices so reordering and removal don't point at the wrong zone.
+    zone_history: Cell<(Option<u64>, Option<u64>)>,
     shortcut_ctl: RefCell<Option<gtk::ShortcutController>>,
     bindings_monitor: RefCell<Option<gio::FileMonitor>>,
     /// User CSS from style.css, applied at the USER priority so it overrides
@@ -62,6 +65,7 @@ pub fn build(gtk_app: &adw::Application) {
         text_bindings: RefCell::new(text_bindings::load()),
         save_source: RefCell::new(None),
         next_zone_id: Cell::new(1),
+        zone_history: Cell::new((None, None)),
         shortcut_ctl: RefCell::new(None),
         bindings_monitor: RefCell::new(None),
         style_provider: gtk::CssProvider::new(),
@@ -144,6 +148,7 @@ impl App {
             }
             "prev-zone" => self.cycle_zone(false),
             "next-zone" => self.cycle_zone(true),
+            "last-zone" => self.select_last_zone(),
             "move-zone-up" => self.move_zone(-1),
             "move-zone-down" => self.move_zone(1),
             "copy" => self.copy(),
@@ -182,6 +187,15 @@ impl App {
             let app = self.clone();
             keybinds::add_sc(&ctl, &format!("<Alt>{i}"), move || {
                 app.select_zone(i - 1);
+                glib::Propagation::Stop
+            });
+        }
+        // Ctrl+Alt+1..9 mirror Alt+1..9; Ctrl+Alt+0 reaches the tenth zone.
+        for i in 0..=9usize {
+            let app = self.clone();
+            let idx = if i == 0 { 9 } else { i - 1 };
+            keybinds::add_sc(&ctl, &format!("<Control><Alt>{i}"), move || {
+                app.select_zone(idx);
                 glib::Propagation::Stop
             });
         }
@@ -281,7 +295,15 @@ impl App {
         self.zones.borrow_mut().push(zone.clone());
         self.update_sidebar_reveal();
         Self::refresh_zone_git(&zone);
+        self.renumber_zones();
         zone
+    }
+
+    /// Refresh every row's position chip after the sidebar order changes.
+    fn renumber_zones(&self) {
+        for (i, zone) in self.zones.borrow().iter().enumerate() {
+            zone.number_label.set_label(&(i + 1).to_string());
+        }
     }
 
     pub fn add_zone(self: &Rc<Self>, name: &str, cwd: &str) {
@@ -289,6 +311,7 @@ impl App {
             name: name.into(),
             cwd: cwd.into(),
             root: None,
+            avatar: None,
             tabs: Vec::new(),
         };
         self.append_zone(&zs);
@@ -304,6 +327,7 @@ impl App {
         self.zones.borrow_mut().remove(idx);
         self.listbox.remove(&zone.row);
         self.stack.remove(&zone.page);
+        self.renumber_zones();
         let len = self.zones.borrow().len();
         if len == 0 {
             self.add_zone("main", &state::home_dir());
@@ -316,6 +340,13 @@ impl App {
     pub fn rename_zone(self: &Rc<Self>, zone: &Rc<Zone>, name: &str) {
         *zone.name.borrow_mut() = name.to_string();
         zone.name_label.set_label(name);
+        zone.avatar.set_text(Some(name));
+        self.schedule_save();
+    }
+
+    pub fn set_zone_avatar(self: &Rc<Self>, zone: &Rc<Zone>, path: Option<std::path::PathBuf>) {
+        crate::zone::apply_avatar(&zone.avatar, path.as_deref());
+        *zone.avatar_path.borrow_mut() = path;
         self.schedule_save();
     }
 
@@ -323,6 +354,16 @@ impl App {
         if let Some(row) = self.listbox.row_at_index(idx as i32) {
             self.listbox.select_row(Some(&row));
         }
+    }
+
+    /// Flip to the zone that was selected before the current one.
+    fn select_last_zone(self: &Rc<Self>) -> glib::Propagation {
+        let (_, prev) = self.zone_history.get();
+        let idx = prev.and_then(|id| self.zones.borrow().iter().position(|z| z.id == id));
+        if let Some(idx) = idx {
+            self.select_zone(idx);
+        }
+        glib::Propagation::Stop
     }
 
     fn cycle_zone(self: &Rc<Self>, next: bool) -> glib::Propagation {
@@ -366,6 +407,7 @@ impl App {
         self.zones.borrow_mut().swap(cur, new);
         self.listbox.remove(&neighbor);
         self.listbox.insert(&neighbor, cur as i32);
+        self.renumber_zones();
         self.schedule_save();
         glib::Propagation::Stop
     }
@@ -378,6 +420,10 @@ impl App {
         let Some(zone) = self.zones.borrow().get(idx as usize).cloned() else {
             return;
         };
+        let (cur, prev) = self.zone_history.get();
+        if cur != Some(zone.id) {
+            self.zone_history.set((Some(zone.id), cur.or(prev)));
+        }
         // Read this before switching pages: GtkStack moves keyboard focus into
         // the new page's first focusable child, which fires the terminal's
         // focus-enter hook and clobbers `last_focused` with the top pane.

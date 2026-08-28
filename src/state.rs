@@ -101,6 +101,9 @@ pub struct ZoneState {
     pub name: String,
     pub cwd: String,
     pub root: Option<NodeState>,
+    /// Sidebar picture; `None` shows the zone name's initials instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<PathBuf>,
     /// Legacy (pre-pane-tree) tab list; consumed by effective_root().
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<TabState>,
@@ -112,6 +115,7 @@ impl Default for ZoneState {
             name: "main".into(),
             cwd: home_dir(),
             root: None,
+            avatar: None,
             tabs: Vec::new(),
         }
     }

@@ -17,6 +17,12 @@ pub struct Zone {
     pub last_focused: glib::WeakRef<vte::Terminal>,
     pub row: gtk::ListBoxRow,
     pub name_label: gtk::Label,
+    /// Sidebar position chip (1-based), kept current by `App::renumber_zones`.
+    pub number_label: gtk::Label,
+    /// Picture chip: a custom image when `avatar_path` is set, else the
+    /// name's initials on a name-derived color.
+    pub avatar: adw::Avatar,
+    pub avatar_path: RefCell<Option<std::path::PathBuf>>,
     /// Secondary line: a directory basename label, or one colored label per
     /// git-status token once refreshed. See [`populate_path_box`].
     pub path_box: gtk::Box,
@@ -39,6 +45,17 @@ impl Zone {
         // Sidebar row.
         let name_label = gtk::Label::new(Some(&zs.name));
         name_label.set_xalign(0.0);
+        name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let number_label = gtk::Label::new(None);
+        number_label.add_css_class("zone-number");
+        number_label.set_valign(gtk::Align::Center);
+        let title_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        title_box.append(&number_label);
+        title_box.append(&name_label);
+        let avatar = adw::Avatar::new(36, Some(&zs.name), true);
+        avatar.add_css_class("zone-avatar");
+        avatar.set_valign(gtk::Align::Center);
+        apply_avatar(&avatar, zs.avatar.as_deref());
         let dir = state::display_name(&zs.cwd);
         // Token separators are baked into each label's text, so spacing is 0.
         let path_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -46,12 +63,13 @@ impl Zone {
         populate_path_box(&path_box, None, &dir);
         let text_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
         text_box.set_hexpand(true);
-        text_box.append(&name_label);
+        text_box.append(&title_box);
         text_box.append(&path_box);
         let attention = gtk::Image::from_icon_name("media-record-symbolic");
         attention.add_css_class("attention-dot");
         attention.set_visible(false);
-        let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row_box.append(&avatar);
         row_box.append(&text_box);
         row_box.append(&attention);
         let row = gtk::ListBoxRow::new();
@@ -66,6 +84,9 @@ impl Zone {
             last_focused: glib::WeakRef::new(),
             row,
             name_label,
+            number_label,
+            avatar,
+            avatar_path: RefCell::new(zs.avatar.clone()),
             path_box,
             git_text: Rc::new(RefCell::new(dir)),
             attention,
@@ -82,6 +103,22 @@ impl Zone {
                 }
             });
             zone.row.add_controller(gesture);
+        }
+        {
+            // Right-click on the picture itself opens the picture menu instead
+            // of the row menu; claiming the sequence keeps the row's gesture out.
+            let app = app.clone();
+            let zw = Rc::downgrade(&zone);
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(3);
+            gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+            gesture.connect_pressed(move |g, _, x, y| {
+                g.set_state(gtk::EventSequenceState::Claimed);
+                if let Some(z) = zw.upgrade() {
+                    crate::window::show_avatar_menu(&app, &z, x, y);
+                }
+            });
+            zone.avatar.add_controller(gesture);
         }
 
         let root = restore_node(app, &zone, &zs.effective_root());
@@ -102,9 +139,26 @@ impl Zone {
             name: self.name.borrow().clone(),
             cwd: self.cwd.clone(),
             root: Some(root),
+            avatar: self.avatar_path.borrow().clone(),
             tabs: Vec::new(),
         }
     }
+}
+
+/// Point the chip at `path`, or back at the initials when `None` or unloadable.
+pub fn apply_avatar(avatar: &adw::Avatar, path: Option<&std::path::Path>) {
+    let texture = path.and_then(|p| match gtk::gdk::Texture::from_filename(p) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            eprintln!("vmux: cannot load zone picture {}: {e}", p.display());
+            None
+        }
+    });
+    avatar.set_custom_image(
+        texture
+            .as_ref()
+            .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
+    );
 }
 
 /// Rebuild the secondary line's contents, replacing any existing children.

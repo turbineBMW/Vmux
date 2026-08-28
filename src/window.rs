@@ -265,6 +265,67 @@ pub fn remove_zone_dialog(app: &Rc<App>, zone: &Rc<Zone>) {
     dialog.present(Some(&app.window));
 }
 
+/// Right-click menu on a zone's picture chip: pick a file, or drop back to
+/// initials.
+pub fn show_avatar_menu(app: &Rc<App>, zone: &Rc<Zone>, x: f64, y: f64) {
+    let choose = gtk::Button::with_label("Choose Picture…");
+    choose.add_css_class("flat");
+    let clear = gtk::Button::with_label("Use Initials");
+    clear.add_css_class("flat");
+    clear.set_sensitive(zone.avatar_path.borrow().is_some());
+    let bx = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    bx.append(&choose);
+    bx.append(&clear);
+
+    let pop = gtk::Popover::new();
+    pop.set_child(Some(&bx));
+    pop.set_parent(&zone.avatar);
+    pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    pop.set_has_arrow(false);
+    {
+        let app = app.clone();
+        let zone = zone.clone();
+        let pop = pop.clone();
+        choose.connect_clicked(move |_| {
+            pop.popdown();
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Images"));
+            filter.add_mime_type("image/*");
+            let filters = gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            let chooser = gtk::FileDialog::builder()
+                .title("Choose a zone picture")
+                .default_filter(&filter)
+                .filters(&filters)
+                .modal(true)
+                .build();
+            let window = app.window.clone();
+            let app = app.clone();
+            let zone = zone.clone();
+            chooser.open(Some(&window), gio::Cancellable::NONE, move |res| {
+                let Some(path) = res.ok().and_then(|f| f.path()) else {
+                    return;
+                };
+                app.set_zone_avatar(&zone, Some(path));
+            });
+        });
+    }
+    {
+        let app = app.clone();
+        let zone = zone.clone();
+        let pop = pop.clone();
+        clear.connect_clicked(move |_| {
+            pop.popdown();
+            app.set_zone_avatar(&zone, None);
+        });
+    }
+    pop.connect_closed(|p| {
+        let p = p.clone();
+        glib::idle_add_local_once(move || p.unparent());
+    });
+    pop.popup();
+}
+
 pub fn show_zone_menu(app: &Rc<App>, zone: &Rc<Zone>, x: f64, y: f64) {
     let rename = gtk::Button::with_label("Rename…");
     rename.add_css_class("flat");

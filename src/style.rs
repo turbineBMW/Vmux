@@ -162,6 +162,8 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
  *
  *   .zone-row    - sidebar zone entries, e.g.  .zone-row { padding: 8px 10px; }
  *   .zone-path   - the per-zone secondary line, e.g.  .zone-path { font-size: 0.9em; }
+ *   .zone-number - the position chip before the zone name
+ *   .zone-avatar - the picture/initials chip
  *   tabbar tab   - pane tab labels, e.g.  tabbar tab { font-weight: bold; }
  *
  * Root and remote classes can be restyled beyond their mapped indicator color:

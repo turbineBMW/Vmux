@@ -33,7 +33,17 @@ const CSS: &str = "
 .zone-path .git-deleted,
 .zone-path .git-lines-del    { color: #c01c28; }
 .zone-path .git-ahead        { color: #2a7bde; }
-.zone-row { padding: 6px 8px; }
+.zone-row { padding: 6px 8px; margin-bottom: 10px; }
+.zone-row:last-child { margin-bottom: 0; }
+.zone-number {
+    font-size: 0.75em;
+    font-weight: bold;
+    min-width: 1.2em;
+    padding: 0 4px;
+    border-radius: 999px;
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
+    opacity: 0.8;
+}
 /* Icon for the custom last-tab drag (pane::setup_single_tab_dnd); native
    multi-tab drags render adw's own tab snapshot instead. */
 .tab-drag-icon {

@@ -32,6 +32,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("rename-zone", "Rename Zone", "<Control><Alt>r"),
     ("prev-zone", "Previous Zone", "<Control><Alt>Page_Up"),
     ("next-zone", "Next Zone", "<Control><Alt>Page_Down"),
+    ("last-zone", "Last Focused Zone", "<Control><Alt>l"),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
     (
         "move-zone-down",
