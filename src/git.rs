@@ -3,7 +3,6 @@
 //! subprocess (no git library); the work is async so it never stalls the UI.
 
 use gtk4::gio;
-use std::ffi::OsStr;
 
 /// A directory's git state, as rendered on the zone row's secondary line.
 pub struct GitSummary {
@@ -186,13 +185,31 @@ pub fn summary_segments(s: &GitSummary) -> Vec<Segment> {
 
 /// Run `git -C <cwd> <args...>` and return its stdout, or None if git could not
 /// be spawned. stderr is silenced (e.g. the "not a git repository" message).
+///
+/// This deliberately avoids `gio::Subprocess`: GLib spawns with a full
+/// `fork()`, which copies the page tables of the whole (large, multi-threaded)
+/// GTK process and blocks the caller for several ms. The 3s poll issues three
+/// of these per zone, so with a dozen zones that froze the main loop for a
+/// few hundred ms and showed up as typing hitches. `std::process::Command`
+/// uses `posix_spawn` (vfork, no page-table copy), and running it on a worker
+/// thread keeps even that off the UI thread.
 async fn git_output(cwd: &str, args: &[&str]) -> Option<String> {
-    let mut argv: Vec<&OsStr> = vec![OsStr::new("git"), OsStr::new("-C"), OsStr::new(cwd)];
-    argv.extend(args.iter().map(|a| OsStr::new(*a)));
-    let flags = gio::SubprocessFlags::STDOUT_PIPE | gio::SubprocessFlags::STDERR_SILENCE;
-    let proc = gio::Subprocess::newv(&argv, flags).ok()?;
-    let (stdout, _) = proc.communicate_utf8_future(None).await.ok()?;
-    Some(stdout.map(|s| s.to_string()).unwrap_or_default())
+    let cwd = cwd.to_owned();
+    let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+    gio::spawn_blocking(move || {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Compute the git summary for `cwd`, or None if it isn't a git repository
