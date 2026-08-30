@@ -166,9 +166,16 @@ const TOUCH_PAN_THRESHOLD: f64 = 8.0;
 /// the first motion event, which denies any competing GtkGesture before it can
 /// react — so a threshold-based GestureDrag never even receives an update.
 /// Instead we watch the raw touch events in the capture phase (ahead of vte)
-/// and steer them by hand: small movements and taps are passed through to vte
-/// (`Proceed`), and once the finger clearly pans we consume the rest of the
-/// sequence (`Stop`) and scroll it ourselves.
+/// and steer them by hand. Within the tap threshold everything is passed to
+/// vte, so taps and the start of a drag-selection work as usual. Once the
+/// finger travels past the threshold we decide by direction: a mostly
+/// vertical drag abandons whatever selection vte began and scrolls; a mostly
+/// horizontal drag is left entirely to vte, so text can still be selected
+/// along a line with a finger.
+///
+/// The release is always passed through, even when we scrolled. vte's press
+/// handler must be balanced by a release or it stays in "button held" mode,
+/// where a later mouse click extends a selection instead of clearing it.
 ///
 /// How we scroll depends on the foreground program. When vte's scrollback has
 /// room to move (normal-screen shell output) we drag its adjustment directly —
@@ -180,8 +187,11 @@ const TOUCH_PAN_THRESHOLD: f64 = 8.0;
 /// won't respond to this.
 fn add_touch_scroll(term: &vte::Terminal) {
     use std::cell::Cell;
-    // Y position (surface coords) where the current touch started.
-    let start_y = Rc::new(Cell::new(0.0));
+    // Position (surface coords) where the current touch started.
+    let start = Rc::new(Cell::new((0.0, 0.0)));
+    // Set once the drag has clearly gone sideways: the rest of the sequence
+    // belongs to vte (text selection) and we stay out of it.
+    let selecting = Rc::new(Cell::new(false));
     // NaN until the gesture commits to a scroll; non-NaN also means "we own
     // this sequence now". In adjustment mode it holds the anchored adjustment
     // value; in wheel mode it holds the Y of the last emitted wheel step.
@@ -200,8 +210,9 @@ fn add_touch_scroll(term: &vte::Terminal) {
         };
         match ev.event_type() {
             EventType::TouchBegin => {
-                start_y.set(ev.position().map_or(0.0, |(_, y)| y));
+                start.set(ev.position().unwrap_or((0.0, 0.0)));
                 anchor.set(f64::NAN);
+                selecting.set(false);
                 // Let vte see the press so a tap still positions/pastes.
                 glib::Propagation::Proceed
             }
@@ -209,10 +220,19 @@ fn add_touch_scroll(term: &vte::Terminal) {
                 let Some((x, y)) = ev.position() else {
                     return glib::Propagation::Proceed;
                 };
-                let dy = y - start_y.get();
+                if selecting.get() {
+                    return glib::Propagation::Proceed;
+                }
+                let (sx, sy) = start.get();
+                let (dx, dy) = (x - sx, y - sy);
                 if anchor.get().is_nan() {
                     // Still within the tap threshold: leave it to vte.
-                    if dy.abs() < TOUCH_PAN_THRESHOLD {
+                    if dx.abs() < TOUCH_PAN_THRESHOLD && dy.abs() < TOUCH_PAN_THRESHOLD {
+                        return glib::Propagation::Proceed;
+                    }
+                    // Sideways drag: this is a text selection, vte's job.
+                    if dx.abs() > dy.abs() {
+                        selecting.set(true);
                         return glib::Propagation::Proceed;
                     }
                     // Commit. Prefer the scrollback if it has anywhere to go;
@@ -255,13 +275,21 @@ fn add_touch_scroll(term: &vte::Terminal) {
             EventType::TouchEnd | EventType::TouchCancel => {
                 let owned = !anchor.get().is_nan();
                 anchor.set(f64::NAN);
-                // Only swallow the release if we actually took over; otherwise
-                // let vte complete the tap.
+                selecting.set(false);
                 if owned {
-                    glib::Propagation::Stop
-                } else {
-                    glib::Propagation::Proceed
+                    // vte still thinks it is mid-selection (it saw the press
+                    // and the first motion). Let the release reach it so that
+                    // state ends, then clear whatever it resolved on release.
+                    let tw = term.downgrade();
+                    glib::idle_add_local_once(move || {
+                        if let Some(term) = tw.upgrade() {
+                            term.unselect_all();
+                        }
+                    });
                 }
+                // Always let vte see the release so its press state is
+                // balanced (see the doc comment above).
+                glib::Propagation::Proceed
             }
             _ => glib::Propagation::Proceed,
         }
