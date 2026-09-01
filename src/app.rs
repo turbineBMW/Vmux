@@ -149,6 +149,10 @@ impl App {
             "prev-zone" => self.cycle_zone(false),
             "next-zone" => self.cycle_zone(true),
             "last-zone" => self.select_last_zone(),
+            "switch-zone" => {
+                crate::zone_switcher::present_zone_switcher(self);
+                glib::Propagation::Stop
+            }
             "move-zone-up" => self.move_zone(-1),
             "move-zone-down" => self.move_zone(1),
             "copy" => self.copy(),

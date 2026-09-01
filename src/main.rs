@@ -12,6 +12,7 @@ mod term;
 mod text_bindings;
 mod window;
 mod zone;
+mod zone_switcher;
 
 use gtk::prelude::*;
 use gtk4 as gtk;
