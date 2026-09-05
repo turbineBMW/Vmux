@@ -12,11 +12,18 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 struct Candidate {
-    /// Position in `App::zones` (and the sidebar) when the popup opened.
+    /// Position in `App::zones` (and the sidebar) when the popup opened —
+    /// the number shown on the row.
     zone_index: usize,
+    /// Resolved back to a position when chosen: an agent starting up can
+    /// re-sort the sidebar while the popup is open.
+    zone_id: u64,
     name: String,
     /// Secondary line: the zone's git summary or directory basename.
     detail: String,
+    agent: Option<crate::agent::Detected>,
+    /// The agent stopped or asked for input while the zone was out of view.
+    agent_unseen: bool,
 }
 
 /// Case-insensitive substring filter over zone names, preserving sidebar
@@ -39,8 +46,11 @@ pub fn present_zone_switcher(app: &Rc<App>) {
             .enumerate()
             .map(|(i, z)| Candidate {
                 zone_index: i,
+                zone_id: z.id,
                 name: z.name.borrow().clone(),
                 detail: z.git_text.borrow().clone(),
+                agent: z.agent.current.get(),
+                agent_unseen: z.agent.unseen.get(),
             })
             .collect(),
     );
@@ -85,20 +95,22 @@ pub fn present_zone_switcher(app: &Rc<App>) {
     content.append(&scroll);
     window.set_content(Some(&content));
 
-    // Row index -> zone index for whatever the list currently shows.
-    let visible: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+    // Row index -> zone id for whatever the list currently shows.
+    let visible: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
     rebuild_list(&list, &candidates, &visible, "");
 
     let choose = {
         let app = app.clone();
         let window = window.clone();
         let chosen = chosen.clone();
-        Rc::new(move |zone_index: usize| {
+        Rc::new(move |zone_id: u64| {
             chosen.set(true);
+            let idx = app.zones.borrow().iter().position(|z| z.id == zone_id);
+            let Some(idx) = idx else { return };
             // Close first: the modal hands focus back to the parent window,
             // then select_zone's focus_later lands on the new zone's terminal.
             window.close();
-            app.select_zone(zone_index);
+            app.select_zone(idx);
         })
     };
 
@@ -116,11 +128,11 @@ pub fn present_zone_switcher(app: &Rc<App>) {
         let choose = choose.clone();
         entry.connect_activate(move |_| {
             let idx = list.selected_row().map(|r| r.index()).unwrap_or(-1);
-            if let Some(zone_index) = usize::try_from(idx)
+            if let Some(zone_id) = usize::try_from(idx)
                 .ok()
                 .and_then(|i| visible.borrow().get(i).copied())
             {
-                choose(zone_index);
+                choose(zone_id);
             }
         });
     }
@@ -161,11 +173,11 @@ pub fn present_zone_switcher(app: &Rc<App>) {
         let visible = visible.clone();
         let choose = choose.clone();
         list.connect_row_activated(move |_, row| {
-            if let Some(zone_index) = usize::try_from(row.index())
+            if let Some(zone_id) = usize::try_from(row.index())
                 .ok()
                 .and_then(|i| visible.borrow().get(i).copied())
             {
-                choose(zone_index);
+                choose(zone_id);
             }
         });
     }
@@ -204,7 +216,7 @@ pub fn present_zone_switcher(app: &Rc<App>) {
 fn rebuild_list(
     list: &gtk::ListBox,
     candidates: &[Candidate],
-    visible: &Rc<RefCell<Vec<usize>>>,
+    visible: &Rc<RefCell<Vec<u64>>>,
     query: &str,
 ) {
     while let Some(child) = list.first_child() {
@@ -224,6 +236,14 @@ fn rebuild_list(
         let detail = gtk::Label::new(Some(&c.detail));
         detail.add_css_class("dim-label");
         detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.add_css_class("agent-dot");
+        dot.set_valign(gtk::Align::Center);
+        crate::agent::style_badge(&dot, c.agent);
+        if c.agent_unseen {
+            dot.add_css_class("attention");
+        }
+        dot.set_visible(c.agent.is_some());
         let row_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(10)
@@ -235,11 +255,12 @@ fn rebuild_list(
         row_box.append(&number);
         row_box.append(&name);
         row_box.append(&detail);
+        row_box.append(&dot);
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&row_box));
         list.append(&row);
     }
-    *visible.borrow_mut() = matches;
+    *visible.borrow_mut() = matches.iter().map(|&i| candidates[i].zone_id).collect();
     if let Some(row) = list.row_at_index(0) {
         list.select_row(Some(&row));
     }

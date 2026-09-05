@@ -29,6 +29,9 @@ pub struct Config {
     pub notify_on_bell: bool,
     /// Which sound the notification daemon is asked to play.
     pub notification_sound: Sound,
+    /// Move a zone to the top of the sidebar when a coding agent (Claude
+    /// Code, Codex) starts working in it.
+    pub agent_sort_to_top: bool,
     /// Overrides of the default keybindings, action id -> accelerator
     /// ("" disables the binding). Defaults live in keybinds::ACTIONS.
     pub keybindings: BTreeMap<String, String>,
@@ -45,6 +48,7 @@ impl Default for Config {
             desktop_notifications: true,
             notify_on_bell: false,
             notification_sound: Sound::default(),
+            agent_sort_to_top: true,
             keybindings: BTreeMap::new(),
         }
     }
@@ -237,6 +241,7 @@ mod tests {
         assert!(cfg.desktop_notifications);
         assert!(!cfg.notify_on_bell);
         assert_eq!(cfg.notification_sound, Sound::SystemDefault);
+        assert!(cfg.agent_sort_to_top);
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(!json.contains("font"));
         assert!(!json.contains("background_opacity"));

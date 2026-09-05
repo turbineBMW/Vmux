@@ -1,3 +1,4 @@
+use crate::agent;
 use crate::app::App;
 use crate::zone::Zone;
 use crate::{keybinds, splits, state, term};
@@ -331,9 +332,14 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
         #[allow(deprecated)]
         {
             let pw = page.downgrade();
+            let app = app.clone();
+            let zw = Rc::downgrade(zone);
             t.connect_window_title_changed(move |term| {
                 if let Some(page) = pw.upgrade() {
                     refresh_title(term, &page);
+                }
+                if let Some(zone) = zw.upgrade() {
+                    agent::refresh(&app, &zone);
                 }
             });
         }
@@ -353,6 +359,8 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
         }
         {
             let pw = page.downgrade();
+            let app = app.clone();
+            let zw = Rc::downgrade(zone);
             t.connect_termprop_changed(
                 Some(vmux::osc_scan::FGPROC_TERMPROP_NAME),
                 move |term, _name| {
@@ -363,6 +371,9 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                     // panes via drag, so capturing it here would go stale.
                     if let Some(pane) = splits::pane_of(term.upcast_ref()) {
                         refresh_tab_indicators(&pane);
+                    }
+                    if let Some(zone) = zw.upgrade() {
+                        agent::refresh(&app, &zone);
                     }
                 },
             );
@@ -417,7 +428,7 @@ fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
 
 /// The foreground command vmux-relay last reported via the fgproc termprop,
 /// or None when unset/empty (the shell itself is in front).
-fn fg_command(terminal: &vte::Terminal) -> Option<String> {
+pub fn fg_command(terminal: &vte::Terminal) -> Option<String> {
     let (name, _) = fg_payload(terminal);
     let name = name.trim();
     (!name.is_empty()).then(|| name.to_string())

@@ -206,6 +206,7 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
                 && let Some(zone) = app.active_zone()
             {
                 zone.attention.set_visible(false);
+                crate::agent::mark_seen(&zone);
                 app.withdraw_zone_notification(&zone);
             }
         });

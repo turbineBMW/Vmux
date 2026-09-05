@@ -203,6 +203,26 @@ pub fn show_settings(app: &Rc<App>) {
     }
     notif_group.add(&test_row);
     general.add(&notif_group);
+
+    let agent_group = adw::PreferencesGroup::new();
+    agent_group.set_title("Coding agents");
+    agent_group.set_description(Some(
+        "Claude Code and Codex are detected from each terminal's foreground command and title",
+    ));
+    let sort_row = adw::SwitchRow::builder()
+        .title("Move working workspaces to the top")
+        .subtitle("Reorder the sidebar when an agent starts working in a workspace")
+        .active(app.config.borrow().agent_sort_to_top)
+        .build();
+    {
+        let app = app.clone();
+        sort_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().agent_sort_to_top = row.is_active();
+            app.schedule_save();
+        });
+    }
+    agent_group.add(&sort_row);
+    general.add(&agent_group);
     dialog.add(&general);
 
     dialog.add(&crate::appearance::page(app));

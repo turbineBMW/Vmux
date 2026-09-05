@@ -1,5 +1,5 @@
 use crate::zone::Zone;
-use crate::{git, keybinds, pane, splits, state, style, term, text_bindings, window};
+use crate::{agent, git, keybinds, pane, splits, state, style, term, text_bindings, window};
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use libadwaita as adw;
@@ -455,6 +455,7 @@ impl App {
         }
         self.stack.set_visible_child_name(&zone.stack_name());
         zone.attention.set_visible(false);
+        agent::mark_seen(&zone);
         self.withdraw_zone_notification(&zone);
         if let Some(t) = target {
             term::focus_later(&t);
@@ -584,11 +585,58 @@ impl App {
     }
 
     pub fn on_term_exited(self: &Rc<Self>, zone: &Rc<Zone>, terminal: &vte::Terminal) {
-        let _ = zone;
         if terminal.root().is_none() {
             return; // already torn down (tab closed, zone removed)
         }
         pane::close_tab_of(terminal);
+        agent::refresh(self, zone);
+        self.schedule_save();
+    }
+
+    // ----- coding agents ----------------------------------------------------
+
+    /// Whether the user can be assumed to see `zone` right now: it is the
+    /// visible page and the window is active. The same rule gates the
+    /// attention dot and desktop notifications.
+    pub fn zone_in_view(&self, zone: &Zone) -> bool {
+        let visible = self
+            .stack
+            .visible_child_name()
+            .map(|n| n == zone.stack_name())
+            .unwrap_or(false);
+        visible && self.window.is_active()
+    }
+
+    /// A zone's agent went from not-working to working: optionally float
+    /// the zone to the top of the sidebar.
+    pub fn on_agent_started(self: &Rc<Self>, zone: &Rc<Zone>) {
+        if self.config.borrow().agent_sort_to_top {
+            self.move_zone_to_top(zone);
+        }
+    }
+
+    /// Move `zone` to sidebar position 0 without ever removing the selected
+    /// row: as `move_zone` notes, that clears the selection for good. When
+    /// the zone itself is selected, the rows above it hop past it one at a
+    /// time instead (none of them is the selected one).
+    fn move_zone_to_top(self: &Rc<Self>, zone: &Rc<Zone>) {
+        let idx_opt = self.zones.borrow().iter().position(|z| Rc::ptr_eq(z, zone));
+        let Some(idx) = idx_opt else { return };
+        if idx == 0 {
+            return;
+        }
+        if self.listbox.selected_row().as_ref() == Some(&zone.row) {
+            for _ in 0..idx {
+                let Some(row) = self.listbox.row_at_index(0) else { break };
+                self.listbox.remove(&row);
+                self.listbox.insert(&row, idx as i32);
+            }
+        } else {
+            self.listbox.remove(&zone.row);
+            self.listbox.insert(&zone.row, 0);
+        }
+        self.zones.borrow_mut()[..=idx].rotate_right(1);
+        self.renumber_zones();
         self.schedule_save();
     }
 

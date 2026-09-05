@@ -1,3 +1,4 @@
+mod agent;
 mod app;
 mod appearance;
 mod git;
@@ -23,6 +24,33 @@ const APP_ID: &str = "dev.vmux.Vmux";
 
 const CSS: &str = "
 .attention-dot { color: @accent_bg_color; }
+/* Coding-agent state on the zone chip (agent::apply). The badge sits on the
+   picture's corner while an agent is open, pulses while it works, and turns
+   red when it asks for input; the ring marks a zone whose agent stopped or
+   asked while the zone was out of view. Override in ~/.config/vmux/style.css. */
+:root { --vmux-agent-color: #3584e4; --vmux-agent-attention-color: #f66151; }
+.agent-dot {
+    min-width: 8px;
+    min-height: 8px;
+    border-radius: 999px;
+    background-color: var(--vmux-agent-color);
+}
+.agent-dot.attention { background-color: var(--vmux-agent-attention-color); }
+.agent-dot.working { animation: vmux-agent-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes vmux-agent-pulse {
+    from { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--vmux-agent-color) 60%, transparent); }
+    to   { opacity: 0.45; box-shadow: 0 0 0 5px transparent; }
+}
+.agent-badge {
+    min-width: 10px;
+    min-height: 10px;
+    border: 2px solid var(--sidebar-bg-color);
+    margin: -2px;
+}
+.agent-chip { border-radius: 9999px; }
+.agent-chip.agent-attention {
+    box-shadow: 0 0 0 2px var(--sidebar-bg-color), 0 0 0 4px var(--vmux-agent-attention-color);
+}
 .zone-path { font-size: 0.85em; }
 /* Secondary line: dim the directory name and the clean marker; color each
    git-status token. Override any of these in ~/.config/vmux/style.css. */

@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::{git, pane, splits, state};
+use crate::{agent, git, pane, splits, state};
 use gtk4 as gtk;
 use gtk4::glib;
 use libadwaita as adw;
@@ -30,6 +30,13 @@ pub struct Zone {
     /// computes the same string can skip rebuilding the labels.
     pub git_text: Rc<RefCell<String>>,
     pub attention: gtk::Image,
+    /// Coding-agent activity roll-up for the chip badge/ring; see [`agent`].
+    pub agent: agent::ZoneAgent,
+    /// The dot on the picture's corner, shown while an agent is open.
+    pub agent_badge: gtk::Box,
+    /// Wraps the picture and badge; carries the attention ring, since the
+    /// avatar's own CSS node is square and would draw a square shadow.
+    pub agent_chip: gtk::Overlay,
 }
 
 impl Zone {
@@ -56,6 +63,18 @@ impl Zone {
         avatar.add_css_class("zone-avatar");
         avatar.set_valign(gtk::Align::Center);
         apply_avatar(&avatar, zs.avatar.as_deref());
+        let agent_badge = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        agent_badge.add_css_class("agent-dot");
+        agent_badge.add_css_class("agent-badge");
+        agent_badge.set_halign(gtk::Align::End);
+        agent_badge.set_valign(gtk::Align::End);
+        agent_badge.set_can_target(false);
+        agent_badge.set_visible(false);
+        let chip = gtk::Overlay::new();
+        chip.set_child(Some(&avatar));
+        chip.add_overlay(&agent_badge);
+        chip.add_css_class("agent-chip");
+        chip.set_valign(gtk::Align::Center);
         let dir = state::display_name(&zs.cwd);
         // Token separators are baked into each label's text, so spacing is 0.
         let path_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -69,7 +88,7 @@ impl Zone {
         attention.add_css_class("attention-dot");
         attention.set_visible(false);
         let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row_box.append(&avatar);
+        row_box.append(&chip);
         row_box.append(&text_box);
         row_box.append(&attention);
         let row = gtk::ListBoxRow::new();
@@ -90,6 +109,9 @@ impl Zone {
             path_box,
             git_text: Rc::new(RefCell::new(dir)),
             attention,
+            agent: agent::ZoneAgent::default(),
+            agent_badge,
+            agent_chip: chip,
         });
 
         {

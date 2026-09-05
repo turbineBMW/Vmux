@@ -164,6 +164,9 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
  *   .zone-path   - the per-zone secondary line, e.g.  .zone-path { font-size: 0.9em; }
  *   .zone-number - the position chip before the zone name
  *   .zone-avatar - the picture/initials chip
+ *   .agent-dot   - the coding-agent badge on the chip (.working / .attention),
+ *                  colored by --vmux-agent-color / --vmux-agent-attention-color
+ *   .agent-chip.agent-attention - the ring around a chip whose agent stopped
  *   tabbar tab   - pane tab labels, e.g.  tabbar tab { font-weight: bold; }
  *
  * Root and remote classes can be restyled beyond their mapped indicator color:
