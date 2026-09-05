@@ -357,6 +357,16 @@ impl App {
     pub fn select_zone(self: &Rc<Self>, idx: usize) {
         if let Some(row) = self.listbox.row_at_index(idx as i32) {
             self.listbox.select_row(Some(&row));
+            // Keyboard switching can land on a row scrolled out of the
+            // sidebar. Deferred to an idle so a just-appended row (add_zone)
+            // has been laid out and its bounds are real.
+            let listbox = self.listbox.clone();
+            let row = row.downgrade();
+            glib::idle_add_local_once(move || {
+                if let Some(row) = row.upgrade() {
+                    window::scroll_row_into_view(&listbox, &row);
+                }
+            });
         }
     }
 

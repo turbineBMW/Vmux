@@ -212,6 +212,25 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
     }
 }
 
+/// Scroll a list's viewport just far enough to show `row`. A ListBox inside a
+/// ScrolledWindow gets its vertical adjustment hooked up automatically, so the
+/// row's bounds within the list are directly comparable to the adjustment.
+pub fn scroll_row_into_view(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
+    let Some(adj) = list.adjustment() else {
+        return;
+    };
+    let Some(bounds) = row.compute_bounds(list) else {
+        return;
+    };
+    let y = bounds.y() as f64;
+    let h = bounds.height() as f64;
+    if y < adj.value() {
+        adj.set_value(y);
+    } else if y + h > adj.value() + adj.page_size() {
+        adj.set_value(y + h - adj.page_size());
+    }
+}
+
 pub fn new_zone_dialog(app: &Rc<App>) {
     let on_open = {
         let app = app.clone();

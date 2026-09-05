@@ -132,7 +132,6 @@ pub fn present_zone_switcher(app: &Rc<App>) {
     {
         // Arrow keys move the list highlight without leaving the entry.
         let list = list.clone();
-        let scroll = scroll.clone();
         let key = gtk::EventControllerKey::new();
         key.connect_key_pressed(move |_, keyval, _, modifier| {
             if modifier.intersects(
@@ -146,11 +145,11 @@ pub fn present_zone_switcher(app: &Rc<App>) {
             }
             match keyval {
                 gdk::Key::Up => {
-                    move_selection(&list, &scroll, -1);
+                    move_selection(&list, -1);
                     glib::Propagation::Stop
                 }
                 gdk::Key::Down => {
-                    move_selection(&list, &scroll, 1);
+                    move_selection(&list, 1);
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -247,7 +246,7 @@ fn rebuild_list(
 }
 
 /// Move the highlight up/down with wrap-around, keeping it in view.
-fn move_selection(list: &gtk::ListBox, scroll: &gtk::ScrolledWindow, delta: i32) {
+fn move_selection(list: &gtk::ListBox, delta: i32) {
     let mut count = 0;
     while list.row_at_index(count).is_some() {
         count += 1;
@@ -263,21 +262,7 @@ fn move_selection(list: &gtk::ListBox, scroll: &gtk::ScrolledWindow, delta: i32)
     };
     if let Some(row) = list.row_at_index(next) {
         list.select_row(Some(&row));
-        scroll_to_row(scroll, list, &row);
-    }
-}
-
-fn scroll_to_row(scroll: &gtk::ScrolledWindow, list: &gtk::ListBox, row: &gtk::ListBoxRow) {
-    let Some(bounds) = row.compute_bounds(list) else {
-        return;
-    };
-    let adj = scroll.vadjustment();
-    let y = bounds.y() as f64;
-    let h = bounds.height() as f64;
-    if y < adj.value() {
-        adj.set_value(y);
-    } else if y + h > adj.value() + adj.page_size() {
-        adj.set_value(y + h - adj.page_size());
+        crate::window::scroll_row_into_view(list, &row);
     }
 }
 
