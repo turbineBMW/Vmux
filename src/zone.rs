@@ -40,6 +40,17 @@ pub struct Zone {
 }
 
 impl Zone {
+    /// Keep the remembered pane, but follow its current tab selection: the
+    /// tab strip can change tabs without giving the new terminal focus.
+    pub fn focus_target(&self) -> Option<vte::Terminal> {
+        self.last_focused
+            .upgrade()
+            .filter(|t| t.is_ancestor(&self.page))
+            .and_then(|t| splits::pane_of(t.upcast_ref()))
+            .and_then(|p| splits::first_terminal_in(&p))
+            .or_else(|| splits::first_terminal_in(self.page.upcast_ref()))
+    }
+
     pub fn stack_name(&self) -> String {
         format!("zone-{}", self.id)
     }

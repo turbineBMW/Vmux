@@ -8,6 +8,9 @@ use std::rc::{Rc, Weak};
 use vte4 as vte;
 use vte4::prelude::*;
 
+#[cfg(test)]
+mod focus_tests;
+
 pub struct App {
     pub window: adw::ApplicationWindow,
     pub split_view: adw::OverlaySplitView,
@@ -356,7 +359,13 @@ impl App {
 
     pub fn select_zone(self: &Rc<Self>, idx: usize) {
         if let Some(row) = self.listbox.row_at_index(idx as i32) {
-            self.listbox.select_row(Some(&row));
+            if self.listbox.selected_row().as_ref() == Some(&row) {
+                // Selecting the same row emits no signal, but choosing the
+                // current workspace in the switcher should still focus it.
+                self.on_zone_selected(&row);
+            } else {
+                self.listbox.select_row(Some(&row));
+            }
             // Keyboard switching can land on a row scrolled out of the
             // sidebar. Deferred to an idle so a just-appended row (add_zone)
             // has been laid out and its bounds are real.
@@ -441,10 +450,7 @@ impl App {
         // Read this before switching pages: GtkStack moves keyboard focus into
         // the new page's first focusable child, which fires the terminal's
         // focus-enter hook and clobbers `last_focused` with the top pane.
-        let target = zone
-            .last_focused
-            .upgrade()
-            .or_else(|| splits::first_terminal_in(zone.page.upcast_ref()));
+        let target = zone.focus_target();
         if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
             eprintln!(
                 "zone-selected: zone={} target={:?} window-focus={:?}",

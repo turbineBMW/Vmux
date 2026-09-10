@@ -28,7 +28,12 @@ pub fn first_terminal_in(w: &gtk::Widget) -> Option<vte::Terminal> {
     if let Some(st) = w.downcast_ref::<gtk::Stack>() {
         return st.visible_child().and_then(|c| first_terminal_in(&c));
     }
-    // Generic containers (gtk::Box, TabView internals, …)
+    if let Some(view) = w.downcast_ref::<adw::TabView>() {
+        return view
+            .selected_page()
+            .and_then(|page| first_terminal_in(&page.child()));
+    }
+    // Generic containers (gtk::Box, …)
     let mut child = w.first_child();
     while let Some(c) = child {
         if let Some(t) = first_terminal_in(&c) {
