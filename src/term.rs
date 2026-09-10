@@ -488,7 +488,11 @@ pub fn cwd_of(term: &vte::Terminal) -> Option<String> {
 pub fn focus_later(term: &vte::Terminal) {
     let tw = term.downgrade();
     glib::idle_add_local_once(move || {
-        if let Some(t) = tw.upgrade() {
+        // A later workspace/tab switch may have hidden this terminal before
+        // the idle runs. GTK can accept focus even for an unmapped terminal.
+        if let Some(t) = tw.upgrade()
+            && t.is_mapped()
+        {
             t.grab_focus();
         }
     });
