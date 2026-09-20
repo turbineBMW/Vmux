@@ -33,6 +33,8 @@ fn workspace_switch_restores_input_focus() {
         bindings_monitor: RefCell::new(None),
         style_provider: gtk::CssProvider::new(),
         style_monitor: RefCell::new(None),
+        omarchy_provider: gtk::CssProvider::new(),
+        omarchy_monitor: RefCell::new(None),
         drag_emptied: RefCell::new(Vec::new()),
     });
     // Only wire selection: no settings, shell processes, or persistence hooks.

@@ -1,5 +1,7 @@
 use crate::zone::Zone;
-use crate::{agent, git, keybinds, pane, splits, state, style, term, text_bindings, window};
+use crate::{
+    agent, git, keybinds, omarchy, pane, splits, state, style, term, text_bindings, window,
+};
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use libadwaita as adw;
@@ -35,6 +37,12 @@ pub struct App {
     /// both the Adwaita theme and vmux's built-in styles.
     style_provider: gtk::CssProvider,
     style_monitor: RefCell<Option<gio::FileMonitor>>,
+    /// The active Omarchy palette, applied one step above style.css: while
+    /// the user asks to follow the desktop theme, the theme outranks the
+    /// stylesheet's own colors (including any a hand-edit left below the
+    /// managed block). Empty whenever following is off.
+    omarchy_provider: gtk::CssProvider,
+    omarchy_monitor: RefCell<Option<gio::FileMonitor>>,
     /// Panes whose last tab was torn off by a drag; resolved by
     /// [`Self::sweep_drag_emptied`] once the drag concludes.
     drag_emptied: RefCell<Vec<PendingCollapse>>,
@@ -73,6 +81,8 @@ pub fn build(gtk_app: &adw::Application) {
         bindings_monitor: RefCell::new(None),
         style_provider: gtk::CssProvider::new(),
         style_monitor: RefCell::new(None),
+        omarchy_provider: gtk::CssProvider::new(),
+        omarchy_monitor: RefCell::new(None),
         drag_emptied: RefCell::new(Vec::new()),
     });
     window::wire_chrome(&app, &chrome);
@@ -100,9 +110,11 @@ pub fn build(gtk_app: &adw::Application) {
     app.split_view.set_show_sidebar(st.config.show_sidebar);
     app.reinstall_shortcuts();
     app.install_user_css();
+    app.install_omarchy_css();
     app.sync_window_transparency();
     app.watch_text_bindings();
     app.watch_user_css();
+    app.watch_omarchy_theme();
     for zs in &st.zones {
         app.append_zone(zs);
     }
@@ -263,8 +275,96 @@ impl App {
     /// Re-read style.css into the provider, restyling every widget live.
     pub(crate) fn reload_user_css(&self) {
         self.style_provider.load_from_data(&style::load());
+        // The Omarchy palette is rendered from style.css's own terminal
+        // alpha, so it is re-rendered with it; this also restyles VTE.
+        self.reload_omarchy_css();
+    }
+
+    /// Install the Omarchy provider one priority step above the user
+    /// stylesheet. Following the desktop theme has to beat the colors
+    /// style.css states, which is the whole point of following it; toggling
+    /// the setting off empties the provider and style.css is back in charge.
+    fn install_omarchy_css(self: &Rc<Self>) {
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &self.omarchy_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
+            );
+        }
+        self.omarchy_provider
+            .connect_parsing_error(|_, section, err| {
+                eprintln!(
+                    "vmux: omarchy theme css line {}: {err}",
+                    section.start_location().lines() + 1
+                );
+            });
+    }
+
+    /// Re-read the active Omarchy theme into its provider. A theme that is
+    /// missing, unreadable, or not being followed leaves the provider empty.
+    pub(crate) fn reload_omarchy_css(&self) {
+        let theme = self
+            .config
+            .borrow()
+            .follow_omarchy_theme
+            .then(|| omarchy::load(self.terminal_background_alpha()))
+            .flatten();
+        self.omarchy_provider
+            .load_from_data(theme.as_ref().map_or("", |theme| theme.css.as_str()));
+        // vmux is otherwise dark-only; a light Omarchy theme is the one thing
+        // that makes light chrome the right answer.
+        adw::StyleManager::default().set_color_scheme(match &theme {
+            Some(theme) if theme.light => adw::ColorScheme::ForceLight,
+            _ => adw::ColorScheme::ForceDark,
+        });
         self.apply_terminal_style();
         self.sync_window_transparency();
+    }
+
+    /// The alpha the user gave the terminal background in style.css. An
+    /// Omarchy palette is opaque hex, and carrying this over is what keeps
+    /// enabling the theme from silently turning a transparent terminal solid.
+    fn terminal_background_alpha(&self) -> f32 {
+        style::value(style::Declaration::NamedColor(style::TERMINAL_BACKGROUND))
+            .and_then(|value| gtk::gdk::RGBA::parse(&value).ok())
+            .map_or(1.0, |color| color.alpha())
+    }
+
+    /// Recolor live when the desktop theme changes. `omarchy theme set`
+    /// renames a staging directory over `current/theme` and rewrites
+    /// `current/theme.name`, so the watch is on the stable parent — a monitor
+    /// on a file inside the theme would not survive the directory swap. The
+    /// burst of events one switch produces is coalesced into a single reload.
+    fn watch_omarchy_theme(self: &Rc<Self>) {
+        if !omarchy::detected() {
+            return;
+        }
+        let dir = gio::File::for_path(omarchy::state_dir());
+        match dir.monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
+            Ok(monitor) => {
+                let app = self.clone();
+                let pending = Rc::new(Cell::new(false));
+                monitor.connect_changed(move |_, _, _, _| {
+                    if pending.replace(true) {
+                        return;
+                    }
+                    let app = app.clone();
+                    let pending = pending.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(120),
+                        move || {
+                            pending.set(false);
+                            app.reload_omarchy_css();
+                        },
+                    );
+                });
+                *self.omarchy_monitor.borrow_mut() = Some(monitor);
+            }
+            Err(e) => {
+                eprintln!("vmux: cannot watch {}: {e}", omarchy::state_dir().display());
+            }
+        }
     }
 
     /// Hot-reload style.css whenever it changes on disk (mirrors the
@@ -633,7 +733,9 @@ impl App {
         }
         if self.listbox.selected_row().as_ref() == Some(&zone.row) {
             for _ in 0..idx {
-                let Some(row) = self.listbox.row_at_index(0) else { break };
+                let Some(row) = self.listbox.row_at_index(0) else {
+                    break;
+                };
                 self.listbox.remove(&row);
                 self.listbox.insert(&row, idx as i32);
             }

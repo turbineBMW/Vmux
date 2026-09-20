@@ -525,9 +525,17 @@ fn replace_value(css: &str, declaration: Declaration, value: &str) -> String {
     updated
 }
 
+/// Locate the value of one declaration, as a byte range into `css`.
+///
+/// The stylesheet may declare the same thing more than once - the one-time
+/// schema upgrade appends the user's previous style.css after the managed
+/// block, and hand-edits can repeat a rule too. GTK resolves duplicates by
+/// taking the last one, so this reports the last match: reads show the value
+/// in force, and writes land on the declaration that wins the cascade.
 fn declaration_range(css: &str, declaration: Declaration) -> Option<std::ops::Range<usize>> {
     let mut offset = 0;
     let mut in_comment = false;
+    let mut found = None;
     let target_selector = match declaration {
         Declaration::NamedColor(_) => None,
         Declaration::CustomProperty(_) => Some(":root"),
@@ -599,13 +607,13 @@ fn declaration_range(css: &str, declaration: Declaration) -> Option<std::ops::Ra
         let whitespace = rest.len() - rest.trim_start().len();
         let value_start_in_trimmed = trimmed.len() - rest.len() + whitespace;
         let rest = rest.trim_start();
-        let semicolon = rest.find(';')?;
-        let line_start = offset + line.len() - trimmed.len();
-        return Some(
-            line_start + value_start_in_trimmed..line_start + value_start_in_trimmed + semicolon,
-        );
+        if let Some(semicolon) = rest.find(';') {
+            let start = offset + line.len() - trimmed.len() + value_start_in_trimmed;
+            found = Some(start..start + semicolon);
+        }
+        offset += line.len();
     }
-    None
+    found
 }
 
 #[cfg(test)]
@@ -642,6 +650,40 @@ mod tests {
         let updated = replace_value(css, Declaration::TerminalProperty("font-size"), "14pt");
         assert!(updated.contains("font-size: 14pt;"));
         assert!(updated.contains("@define-color tone #112233;"));
+    }
+
+    /// The schema upgrade keeps the user's previous style.css after the
+    /// managed block, so a declaration can appear twice. GTK honors the last
+    /// one; the GUI must read and write that one or its edits do nothing.
+    #[test]
+    fn duplicate_declarations_resolve_to_the_one_gtk_applies() {
+        let css = "@define-color tone #112233;\n\
+                   .vmux-terminal {\n  font-size: 8pt;\n}\n\
+                   :root {\n  --surface: #445566;\n}\n\
+                   /* Preserved rules from the previous style.css follow. */\n\
+                   @define-color tone #aabbcc;\n\
+                   .vmux-terminal {\n  font-size: 12pt;\n}\n\
+                   :root {\n  --surface: #778899;\n}\n";
+        assert_eq!(
+            value_in(css, Declaration::NamedColor("tone")).as_deref(),
+            Some("#aabbcc")
+        );
+        assert_eq!(
+            value_in(css, Declaration::TerminalProperty("font-size")).as_deref(),
+            Some("12pt")
+        );
+        assert_eq!(
+            value_in(css, Declaration::CustomProperty("--surface")).as_deref(),
+            Some("#778899")
+        );
+
+        let updated = replace_value(css, Declaration::TerminalProperty("font-size"), "14pt");
+        assert!(updated.contains(".vmux-terminal {\n  font-size: 8pt;"));
+        assert!(updated.contains(".vmux-terminal {\n  font-size: 14pt;"));
+        assert_eq!(
+            value_in(&updated, Declaration::TerminalProperty("font-size")).as_deref(),
+            Some("14pt")
+        );
     }
 
     #[test]

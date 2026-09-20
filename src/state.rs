@@ -32,6 +32,10 @@ pub struct Config {
     /// Move a zone to the top of the sidebar when a coding agent (Claude
     /// Code, Codex) starts working in it.
     pub agent_sort_to_top: bool,
+    /// Recolor vmux from the active Omarchy theme, live as it changes. The
+    /// palette is layered over style.css rather than written into it, so
+    /// turning this off restores the user's own colors untouched.
+    pub follow_omarchy_theme: bool,
     /// Overrides of the default keybindings, action id -> accelerator
     /// ("" disables the binding). Defaults live in keybinds::ACTIONS.
     pub keybindings: BTreeMap<String, String>,
@@ -49,6 +53,7 @@ impl Default for Config {
             notify_on_bell: false,
             notification_sound: Sound::default(),
             agent_sort_to_top: true,
+            follow_omarchy_theme: false,
             keybindings: BTreeMap::new(),
         }
     }
@@ -242,9 +247,11 @@ mod tests {
         assert!(!cfg.notify_on_bell);
         assert_eq!(cfg.notification_sound, Sound::SystemDefault);
         assert!(cfg.agent_sort_to_top);
+        // Match the serialized key, not the bare word: a current field may
+        // legitimately contain it (follow_omarchy_theme).
         let json = serde_json::to_string(&cfg).unwrap();
-        assert!(!json.contains("font"));
-        assert!(!json.contains("background_opacity"));
-        assert!(!json.contains("theme"));
+        assert!(!json.contains("\"font\":"));
+        assert!(!json.contains("\"background_opacity\":"));
+        assert!(!json.contains("\"theme\":"));
     }
 }

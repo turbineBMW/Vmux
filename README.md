@@ -115,12 +115,34 @@ The settings dialog has three pages:
   `org.freedesktop.Notifications`, so your desktop's do-not-disturb rules
   decide whether anything is heard. A "send a test notification" button lets
   you check the result.
-- **Appearance** — quick-switch among saved themes, save the current
-  stylesheet as a named theme, and labelled controls for the terminal font,
-  every terminal and ANSI colour, window chrome, tab/session indicators, and
-  Git status colours. Each control writes directly to the live-reloaded
-  `style.css`; an Advanced row opens the file for hand editing.
+- **Appearance** — follow the Omarchy desktop theme, quick-switch among saved
+  themes, save the current stylesheet as a named theme, and labelled controls
+  for the terminal font, every terminal and ANSI colour, window chrome,
+  tab/session indicators, and Git status colours. Each colour control writes
+  directly to the live-reloaded `style.css`; an Advanced row opens the file
+  for hand editing.
 - **Keybindings** — every action with its current shortcut; click to rebind.
+
+### Omarchy themes
+
+On [Omarchy](https://omarchy.org/), *Appearance → Follow Omarchy theme* takes
+vmux's colours from the active desktop theme and follows every
+`omarchy theme set` live — terminal palette, window chrome, tab and Git
+colours, and light/dark. The palette is read straight from
+`~/.local/state/omarchy/current/theme/colors.toml` with the same fallbacks
+`omarchy-theme-color` applies, so a theme renders in vmux exactly as it does
+in Alacritty or Ghostty, legacy `color0`..`color15` themes included.
+
+It is layered *over* `style.css` rather than written into it, so the setting
+is reversible: turn it off and your own colours are back, untouched. While it
+is on, the colour controls are dimmed — font, opacity, and every non-colour
+rule in `style.css` still apply, as does the alpha on
+`vmux_terminal_background`, so a transparent terminal stays transparent.
+
+A theme can also take full control by shipping a `vmux.css` (plain GTK CSS,
+same tokens as `style.css`), either in the theme directory or generated from a
+`~/.config/omarchy/themed/vmux.css.tpl` template; vmux uses it verbatim in
+place of the derived palette.
 
 ### Files
 
@@ -129,6 +151,7 @@ The settings dialog has three pages:
 | `~/.config/vmux/state.json` | Zones, layout, tabs and behavioural settings (`config.*`, including `config.keybindings` overrides) |
 | `~/.config/vmux/style.css` | Live stylesheet; every colour token is documented inline |
 | `~/.config/vmux/themes/*.css` | Named theme snapshots |
+| `~/.local/state/omarchy/current/theme/` | Read-only: the Omarchy theme followed when that setting is on |
 
 Set terminal opacity by giving `vmux_terminal_background` an `rgba()` value
 with an alpha below 1.0.

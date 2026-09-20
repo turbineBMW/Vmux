@@ -15,6 +15,7 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 use vmux::osc_scan::{Scanner, encode_fgproc_termprop, encode_termprop};
 
 /// Self-pipe write end for the SIGWINCH/SIGCHLD handler.
@@ -226,6 +227,14 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     let mut last_pgid: libc::pid_t = -1;
     let mut last_sent: Option<(String, Option<u32>)> = Some((String::new(), None));
     let mut pending_fg: Option<(String, Option<u32>)> = None;
+    // A pgid change is not the only way the foreground command changes: a
+    // wrapper script that ends in `exec` becomes a different program in the
+    // same process group (~/.local/bin/claude is `#!/bin/bash` ... `exec mise
+    // x claude`, so the pgid gate alone reports "bash" for the whole
+    // session). Re-read on a throttle as well, but only while the loop is
+    // awake for other reasons, so an idle terminal still costs nothing.
+    const FG_RECHECK: Duration = Duration::from_millis(500);
+    let mut last_fg_read = Instant::now();
     // Short poll ticks scheduled after user input, to catch a silent command
     // (e.g. `sleep`) taking the foreground without producing output. Lapses
     // back to a blocking wait when idle, so there are no wakeups at rest.
@@ -390,7 +399,10 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
         // so it can never split another sequence.
         if status.is_none() {
             let pg = unsafe { libc::tcgetpgrp(master) };
-            if pg != last_pgid {
+            // The shell in front cannot exec into something else, so it needs
+            // no recheck; anything else may still be settling.
+            let recheck = pg > 0 && pg != child && last_fg_read.elapsed() >= FG_RECHECK;
+            if pg != last_pgid || recheck {
                 let name = if pg == child {
                     Some(String::new())
                 } else {
@@ -398,6 +410,7 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                 };
                 if let Some(name) = name {
                     last_pgid = pg;
+                    last_fg_read = Instant::now();
                     // Uid read failure doesn't retry like a name failure: a
                     // name-only payload still titles the tab correctly.
                     let entry = (name, fg_uid(pg));

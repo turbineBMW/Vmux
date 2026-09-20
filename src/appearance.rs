@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::omarchy;
 use crate::style::{self, Declaration};
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -540,79 +541,135 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
         .build();
     let ui = Rc::new(AppearanceUi::default());
 
+    // Every color group below is dimmed while the Omarchy theme is driving
+    // them, so the page never offers a control that cannot take effect.
+    let color_groups: Rc<RefCell<Vec<adw::PreferencesGroup>>> = Rc::new(RefCell::new(Vec::new()));
+    add_omarchy_group(&page, app, &color_groups);
     add_theme_group(&page, app, &ui);
     add_font_group(&page, app, &ui);
-    add_color_group(
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Terminal",
         "Default terminal canvas and text colors.",
         TERMINAL_BASE,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "ANSI Palette",
         "The 16 colors requested by command-line applications.",
         ANSI_COLORS,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Accent & Window",
         "Core libadwaita accent, window, and content colors.",
         ACCENT_WINDOW,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Headers & Sidebars",
         "Window chrome, zone sidebar, and pane-divider colors.",
         HEADER_SIDEBARS,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Raised Surfaces",
         "Cards, menus, popovers, and dialogs.",
         SURFACES,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Status Colors",
         "Semantic action and feedback colors used by libadwaita.",
         SEMANTIC,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Tabs & Sessions",
         "Focused-tab states and root/remote security indicators.",
         TABS_SESSIONS,
-    );
-    add_color_group(
+    ));
+    color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
         &ui,
         "Git Status",
         "Colors in the secondary line of each zone.",
         GIT_COLORS,
-    );
+    ));
     add_opacity_group(&page, app, &ui);
     add_stylesheet_group(&page);
+    set_color_groups_sensitive(
+        &color_groups,
+        !(omarchy::detected() && app.config.borrow().follow_omarchy_theme),
+    );
     ui.refresh_controls();
     if let Err(error) = ui.refresh_themes() {
         eprintln!("vmux: cannot list saved themes: {error}");
     }
     page
+}
+
+/// Follow the desktop theme. Omarchy swaps `colors.toml` under
+/// `~/.local/state/omarchy/current/theme` on every theme change and vmux
+/// layers that palette over style.css, so this is the one appearance control
+/// that does not write to the stylesheet — flipping it off hands the colors
+/// straight back to the file.
+fn add_omarchy_group(
+    page: &adw::PreferencesPage,
+    app: &Rc<App>,
+    color_groups: &Rc<RefCell<Vec<adw::PreferencesGroup>>>,
+) {
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Desktop Theme");
+    group.set_description(Some(
+        "Take colors from Omarchy instead of the stylesheet, and follow every theme switch live.",
+    ));
+    let detected = omarchy::detected();
+    let row = adw::SwitchRow::builder()
+        .title("Follow Omarchy theme")
+        .subtitle(match (detected, omarchy::theme_name()) {
+            (true, Some(name)) => format!(
+                "Currently {name}. Font, opacity, and any rule that is not a color stay yours."
+            ),
+            (true, None) => "Font, opacity, and any rule that is not a color stay yours.".into(),
+            (false, _) => "No Omarchy theme found on this system.".into(),
+        })
+        .active(detected && app.config.borrow().follow_omarchy_theme)
+        .sensitive(detected)
+        .build();
+    {
+        let app = app.clone();
+        let color_groups = color_groups.clone();
+        row.connect_active_notify(move |row| {
+            app.config.borrow_mut().follow_omarchy_theme = row.is_active();
+            app.schedule_save();
+            app.reload_omarchy_css();
+            set_color_groups_sensitive(&color_groups, !row.is_active());
+        });
+    }
+    group.add(&row);
+    page.add(&group);
+}
+
+fn set_color_groups_sensitive(groups: &Rc<RefCell<Vec<adw::PreferencesGroup>>>, sensitive: bool) {
+    for group in groups.borrow().iter() {
+        group.set_sensitive(sensitive);
+    }
 }
 
 fn add_theme_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<AppearanceUi>) {
@@ -823,7 +880,7 @@ fn add_color_group(
     title: &str,
     description: &str,
     fields: &'static [ColorField],
-) {
+) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     group.set_title(title);
     group.set_description(Some(description));
@@ -866,6 +923,7 @@ fn add_color_group(
         group.add(&row);
     }
     page.add(&group);
+    group
 }
 
 fn add_opacity_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<AppearanceUi>) {

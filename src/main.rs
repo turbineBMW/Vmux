@@ -4,6 +4,7 @@ mod appearance;
 mod git;
 mod keybinds;
 mod notify;
+mod omarchy;
 mod open_path_dialog;
 mod pane;
 mod splits;
@@ -163,6 +164,8 @@ fn main() -> glib::ExitCode {
             existing.present();
             return;
         }
+        // The default scheme; App::reload_omarchy_css switches to
+        // ForceLight while following a light Omarchy theme.
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
         let provider = gtk::CssProvider::new();
         provider.load_from_data(CSS);
