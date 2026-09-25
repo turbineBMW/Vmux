@@ -1,5 +1,6 @@
 # Build output
 /target
+/vendor
 
 # Local Claude Code settings (per-machine permissions)
 .claude/settings.local.json

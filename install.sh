@@ -2,9 +2,14 @@
 # User-local install: binaries, .desktop, icons. No root needed.
 set -euo pipefail
 cd "$(dirname "$0")"
+# Vmux needs its libvte fork (inline images); build it once into vendor/vte.
+[[ -f vendor/vte/lib/libvte-2.91-gtk4.so ]] || scripts/build-vte.sh
 cargo build --release
 install -Dm755 target/release/vmux ~/.local/bin/vmux
 install -Dm755 target/release/vmux-relay ~/.local/bin/vmux-relay
+# The binary's rpath looks in ~/.local/lib/vmux for the forked libvte.
+mkdir -p ~/.local/lib/vmux
+cp -P vendor/vte/lib/libvte-2.91-gtk4.so* ~/.local/lib/vmux/
 # Launchers often lack ~/.local/bin on PATH, and .desktop files don't expand ~,
 # so bake the absolute binary path into the installed copy.
 mkdir -p ~/.local/share/applications

@@ -17,7 +17,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install toolchain and GTK stack
-        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 libadwaita vte4 pkgconf git
+        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 libadwaita pkgconf git meson ninja glib2-devel lz4 pcre2 icu fribidi gnutls
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
@@ -26,6 +26,8 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-arch-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Build the libvte fork (inline images)
+        run: scripts/build-vte.sh
       - name: Format
         run: cargo fmt --check
       - name: Clippy

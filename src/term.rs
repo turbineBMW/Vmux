@@ -330,6 +330,20 @@ fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
 
 pub fn apply_settings(term: &vte::Terminal, cfg: &Config) {
     term.set_scrollback_lines(cfg.scrollback_lines);
+    enable_images(term);
+}
+
+/// Turn on every inline image protocol the linked libvte offers. Vmux links
+/// its own libvte fork (vendor/vte) which adds the kitty graphics protocol
+/// and iTerm2 inline images to SIXEL; the extra properties only exist
+/// there, so probe for them and keep working against a stock libvte.
+fn enable_images(term: &vte::Terminal) {
+    term.set_enable_sixel(true);
+    for prop in ["enable-kitty-graphics", "enable-iterm2-images"] {
+        if term.find_property(prop).is_some() {
+            term.set_property(prop, true);
+        }
+    }
 }
 
 /// Apply the terminal appearance exposed by style.css. GTK resolves the font
