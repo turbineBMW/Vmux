@@ -133,8 +133,12 @@ fn scan(zone: &Zone) -> Option<Detected> {
 pub fn refresh(app: &Rc<App>, zone: &Rc<Zone>) {
     let now = scan(zone);
     let prev = zone.agent.current.get();
-    let was_working = prev.map(|d| d.activity == Activity::Working).unwrap_or(false);
-    let is_working = now.map(|d| d.activity == Activity::Working).unwrap_or(false);
+    let was_working = prev
+        .map(|d| d.activity == Activity::Working)
+        .unwrap_or(false);
+    let is_working = now
+        .map(|d| d.activity == Activity::Working)
+        .unwrap_or(false);
 
     if is_working {
         if let Some(id) = zone.agent.settle.borrow_mut().take() {
@@ -157,9 +161,8 @@ pub fn refresh(app: &Rc<App>, zone: &Rc<Zone>) {
         }
         let app = app.clone();
         let zw = Rc::downgrade(zone);
-        let id = glib::timeout_add_local_once(
-            std::time::Duration::from_millis(SETTLE_MS),
-            move || {
+        let id =
+            glib::timeout_add_local_once(std::time::Duration::from_millis(SETTLE_MS), move || {
                 let Some(zone) = zw.upgrade() else { return };
                 *zone.agent.settle.borrow_mut() = None;
                 let now = scan(&zone);
@@ -171,15 +174,18 @@ pub fn refresh(app: &Rc<App>, zone: &Rc<Zone>) {
                     zone.agent.unseen.set(true);
                 }
                 apply(&zone);
-            },
-        );
+            });
         *zone.agent.settle.borrow_mut() = Some(id);
         return;
     }
 
     if now != prev {
-        let asked = now.map(|d| d.activity == Activity::NeedsInput).unwrap_or(false)
-            && prev.map(|d| d.activity != Activity::NeedsInput).unwrap_or(true);
+        let asked = now
+            .map(|d| d.activity == Activity::NeedsInput)
+            .unwrap_or(false)
+            && prev
+                .map(|d| d.activity != Activity::NeedsInput)
+                .unwrap_or(true);
         zone.agent.current.set(now);
         if asked && !app.zone_in_view(zone) {
             zone.agent.unseen.set(true);
@@ -201,15 +207,19 @@ pub fn apply(zone: &Zone) {
     style_badge(&zone.agent_badge, d);
     zone.agent_badge.set_visible(d.is_some());
     let ring = zone.agent.unseen.get()
-        || d.map(|d| d.activity == Activity::NeedsInput).unwrap_or(false);
+        || d.map(|d| d.activity == Activity::NeedsInput)
+            .unwrap_or(false);
     set_class(&zone.agent_chip, "agent-attention", ring);
-    zone.agent_chip.set_tooltip_text(tooltip(d, zone.agent.unseen.get()).as_deref());
+    zone.agent_chip
+        .set_tooltip_text(tooltip(d, zone.agent.unseen.get()).as_deref());
 }
 
 /// Put the activity classes on a badge/dot widget.
 pub fn style_badge(badge: &impl IsA<gtk::Widget>, d: Option<Detected>) {
     let working = d.map(|d| d.activity == Activity::Working).unwrap_or(false);
-    let asking = d.map(|d| d.activity == Activity::NeedsInput).unwrap_or(false);
+    let asking = d
+        .map(|d| d.activity == Activity::NeedsInput)
+        .unwrap_or(false);
     set_class(badge, "working", working);
     set_class(badge, "attention", asking);
 }
@@ -276,8 +286,12 @@ mod tests {
             Some(Activity::NeedsInput)
         );
         assert_eq!(
-            aggregate([d(Activity::NeedsInput), d(Activity::Working), d(Activity::Idle)])
-                .map(|d| d.activity),
+            aggregate([
+                d(Activity::NeedsInput),
+                d(Activity::Working),
+                d(Activity::Idle)
+            ])
+            .map(|d| d.activity),
             Some(Activity::Working)
         );
     }
