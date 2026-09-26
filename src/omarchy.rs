@@ -275,7 +275,16 @@ impl Palette {
         // theme and for a light one alike.
         let chrome = c("dark_background", "background");
         let backdrop = c("darker_background", "background");
-        let border = c("lighter_background", "muted");
+        // The hairline where chrome meets content: the sidebar's edge and the
+        // tab bar's bottom. lighter_background reads as a highlight against a
+        // dark theme's chrome, but a light theme's is lighter still than the
+        // chrome it draws on, so the seam vanishes; darken the chrome toward
+        // the theme's own foreground instead.
+        let border = if self.light {
+            self.mixed("dark_background", "background", "foreground", 0.18)
+        } else {
+            c("lighter_background", "muted")
+        };
         let raised = c("lighter_background", "background");
 
         let mut css = String::from(
@@ -350,6 +359,13 @@ impl Palette {
             property(&format!("{prefix}-backdrop-color"), &backdrop);
             property(&format!("{prefix}-border-color"), &border);
         }
+        // libadwaita draws a tab bar's bottom edge from the headerbar *shade*,
+        // not from any -border-color, so leaving it stock left that seam a
+        // translucent black while the sidebar's edge took the palette color.
+        // `tabbar .box` is the only rule this reaches in vmux — headerbars
+        // inside an AdwToolbarView drop their own shadow — so it just lines
+        // the two seams up.
+        property("--headerbar-shade-color", &border);
         for prefix in ["--card", "--popover", "--dialog"] {
             property(
                 &format!("{prefix}-bg-color"),
@@ -625,6 +641,41 @@ bright_red = "#db9f9c"
         assert!(css.contains("@define-color vmux_terminal_background rgba(17, 28, 24, 0.85);"));
         // Only the terminal canvas is translucent; the window is not.
         assert!(css.contains("--window-bg-color: #111c18;"));
+    }
+
+    /// The sidebar's right edge and a tab bar's bottom are the same seam, so
+    /// they take the same color — libadwaita draws the latter from the
+    /// headerbar shade, which would otherwise stay a stock translucent black.
+    #[test]
+    fn the_sidebar_edge_and_the_tab_bar_share_one_seam_color() {
+        let css = Palette::resolve(
+            "mode = \"dark\"\n\
+             background = \"#111c18\"\n\
+             dark_background = \"#0d1713\"\n\
+             lighter_background = \"#22362a\"\n",
+            false,
+        )
+        .to_css(1.0);
+        assert!(css.contains("--sidebar-border-color: #22362a;"));
+        assert!(css.contains("--headerbar-shade-color: #22362a;"));
+    }
+
+    /// A light theme's lighter_background sits above the chrome it draws on,
+    /// leaving no seam at all, so the seam darkens toward the foreground.
+    #[test]
+    fn a_light_themes_seam_darkens_instead_of_lightening() {
+        let css = Palette::resolve(
+            "mode = \"light\"\n\
+             background = \"#e1e2e7\"\n\
+             dark_background = \"#d4d6e0\"\n\
+             lighter_background = \"#d0d5e3\"\n\
+             foreground = \"#3760bf\"\n",
+            false,
+        )
+        .to_css(1.0);
+        // 18% of the way from the chrome (#d4d6e0) toward the foreground.
+        assert!(css.contains("--sidebar-border-color: #b8c1da;"));
+        assert!(css.contains("--headerbar-shade-color: #b8c1da;"));
     }
 
     #[test]

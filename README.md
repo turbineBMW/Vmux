@@ -36,6 +36,11 @@ the split. Tabs can be dragged between panes.
   real desktop notification naming the zone, even when it's hidden. Clicking
   the notification switches to that zone. A bell in a hidden zone shows an
   attention dot in the sidebar and can optionally notify too.
+- **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
+  inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
+  image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).
+  Stock libvte has no image support on GTK4, so Vmux links its own
+  [libvte fork](https://github.com/turbineBMW/vte) (branch `image-support`).
 - **Git status** — each zone shows its branch and working-tree state under its name in the sidebar, in colours you can theme.
 - **Live CSS themes** — every colour, font and chrome setting is a CSS token
   edited from Preferences or by hand; changes apply instantly and can be
@@ -45,9 +50,16 @@ the split. Tabs can be dragged between panes.
 
 ## Install
 
-Dependencies (Arch): `pacman -S gtk4 libadwaita vte4` plus a Rust toolchain.
-Other distros need the equivalent dev packages; **libvte ≥ 0.78** and
-libadwaita ≥ 1.6 are required.
+Dependencies (Arch): `pacman -S --needed base-devel gtk4 libadwaita meson
+ninja glib2-devel pkgconf` plus a Rust toolchain. Other distros need the
+equivalent dev packages; libadwaita ≥ 1.6 is required.
+
+Vmux does not use the system `vte4`: `scripts/build-vte.sh` (run
+automatically by `install.sh`) builds the [libvte fork](https://github.com/turbineBMW/vte)
+with inline image support into `vendor/vte`, and `.cargo/config.toml` points
+the build and the binary's rpath at it. The fork tracks libvte 0.84; the
+system `vte4` package can stay installed for other applications. To build
+against a local checkout instead of cloning, set `VTE_SRC=/path/to/vte`.
 
 User-local install (binaries to `~/.local/bin`, plus the `.desktop` file and
 icons so launchers and notifications show Vmux properly):

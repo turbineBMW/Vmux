@@ -1,0 +1,16 @@
+# Vmux links against its own fork of libvte (vendor/vte, built by
+# scripts/build-vte.sh) which adds SIXEL, kitty graphics protocol and iTerm2
+# inline image support on top of libvte 0.84.
+#
+# PKG_CONFIG_PATH makes the vte4-sys crate pick the vendored library over the
+# system one at build time; the rpaths let the binary find it at run time both
+# from the source tree (target/{debug,release}/vmux) and once installed to
+# ~/.local/bin (install.sh copies the library to ~/.local/lib/vmux).
+[env]
+PKG_CONFIG_PATH = { value = "vendor/vte/lib/pkgconfig", relative = true }
+
+[build]
+rustflags = [
+  "-C", "link-arg=-Wl,-rpath,$ORIGIN/../../vendor/vte/lib",
+  "-C", "link-arg=-Wl,-rpath,$ORIGIN/../lib/vmux",
+]
