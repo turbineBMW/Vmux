@@ -23,6 +23,8 @@ pub fn install_notify_termprop() {
 /// unchanged values; like the notify prop it must precede the first terminal.
 pub fn install_fgproc_termprop() {
     install_termprop(vmux::osc_scan::FGPROC_TERMPROP_NAME, 0);
+    // The remote session's argv (tab host label): same lifetime rules.
+    install_termprop(vmux::remote::REMOTE_TERMPROP_NAME, 0);
 }
 
 fn install_termprop(name: &str, flags: u32) {

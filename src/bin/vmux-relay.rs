@@ -6,7 +6,9 @@
 //! desktop-notification OSCs (9 / 777 / kitty 99); each one found is
 //! re-emitted upstream as a vte termprop OSC (666) that vmux receives via
 //! the termprop-changed signal. libvte offers no hook for unknown OSC
-//! sequences, hence this shim.
+//! sequences, hence this shim. It also reports the inner pty's foreground
+//! command (tab titles, root/remote tab colors) and, for ssh and friends,
+//! that command's argv (the remote host shown on the tab).
 //!
 //! Teardown relies on the kernel: when vte closes the outer master the
 //! relay (foreground process group of the outer pty) gets a default-action
@@ -17,6 +19,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 use vmux::osc_scan::{Scanner, encode_fgproc_termprop, encode_termprop};
+use vmux::remote::{encode_remote_termprop, is_remote_command};
 
 /// Self-pipe write end for the SIGWINCH/SIGCHLD handler.
 static SELF_PIPE_W: AtomicI32 = AtomicI32::new(-1);
@@ -173,22 +176,28 @@ fn write_fd(fd: i32, buf: &[u8]) -> IoRes {
 }
 
 /// Basename of the foreground process group's command on the inner pty, for
-/// use as a tab title. Prefers /proc/<pgid>/cmdline (untruncated argv[0]) and
+/// use as a tab title, plus its raw /proc cmdline when it is a remote session
+/// (empty otherwise). Prefers /proc/<pgid>/cmdline (untruncated argv[0]) and
 /// falls back to /proc/<pgid>/comm; None on any read failure (caller retries).
-fn fg_name(pgid: libc::pid_t) -> Option<String> {
+fn fg_name(pgid: libc::pid_t) -> Option<(String, Vec<u8>)> {
     if let Ok(cmdline) = std::fs::read(format!("/proc/{pgid}/cmdline")) {
         let arg0 = cmdline.split(|&b| b == 0).next().unwrap_or(&[]);
         if !arg0.is_empty() {
             let s = String::from_utf8_lossy(arg0);
             let base = s.rsplit('/').next().unwrap_or("");
             if !base.is_empty() {
-                return Some(base.to_string());
+                let remote = if is_remote_command(&s) {
+                    cmdline.clone()
+                } else {
+                    Vec::new()
+                };
+                return Some((base.to_string(), remote));
             }
         }
     }
     let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;
     let comm = comm.trim_end_matches('\n');
-    (!comm.is_empty()).then(|| comm.to_string())
+    (!comm.is_empty()).then(|| (comm.to_string(), Vec::new()))
 }
 
 /// Effective uid of the foreground process group leader, from the Uid: line
@@ -223,10 +232,13 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     // Foreground-command tracking on the inner pty (for tab titles and the
     // root/remote tab indicator): (command name, euid). last_sent starts as
     // ("", None), so the first check always emits one payload carrying the
-    // shell's uid — required to color the tabs of a root-run vmux.
+    // shell's uid — required to color the tabs of a root-run vmux. The
+    // remote-session argv travels separately and only when it changes.
     let mut last_pgid: libc::pid_t = -1;
     let mut last_sent: Option<(String, Option<u32>)> = Some((String::new(), None));
     let mut pending_fg: Option<(String, Option<u32>)> = None;
+    let mut last_remote: Vec<u8> = Vec::new();
+    let mut pending_remote: Option<Vec<u8>> = None;
     // A pgid change is not the only way the foreground command changes: a
     // wrapper script that ends in `exec` becomes a different program in the
     // same process group (~/.local/bin/claude is `#!/bin/bash` ... `exec mise
@@ -267,7 +279,7 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
         // (then tick every 120ms until it lapses).
         let timeout: libc::c_int = if status.is_some() {
             50
-        } else if poll_ticks > 0 || pending_fg.is_some() {
+        } else if poll_ticks > 0 || pending_fg.is_some() || pending_remote.is_some() {
             120
         } else {
             -1
@@ -404,11 +416,11 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
             let recheck = pg > 0 && pg != child && last_fg_read.elapsed() >= FG_RECHECK;
             if pg != last_pgid || recheck {
                 let name = if pg == child {
-                    Some(String::new())
+                    Some((String::new(), Vec::new()))
                 } else {
                     fg_name(pg)
                 };
-                if let Some(name) = name {
+                if let Some((name, remote)) = name {
                     last_pgid = pg;
                     last_fg_read = Instant::now();
                     // Uid read failure doesn't retry like a name failure: a
@@ -417,21 +429,28 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                     if last_sent.as_ref() != Some(&entry) {
                         pending_fg = Some(entry);
                     }
+                    pending_remote = (remote != last_remote).then_some(remote);
                 }
             }
             // Flush at any sequence boundary. If the output buffer is already
             // drained, reset it; otherwise append after the queued bytes —
             // still a boundary, since at_ground reflects the end of what is
             // queued, so the OSC can't split another sequence.
-            if scanner.at_ground()
-                && let Some((name, uid)) = pending_fg.take()
-            {
+            if scanner.at_ground() && (pending_fg.is_some() || pending_remote.is_some()) {
                 if out_start >= out.len() {
                     out.clear();
                     out_start = 0;
                 }
-                out.extend_from_slice(&encode_fgproc_termprop(&name, uid));
-                last_sent = Some((name, uid));
+                // Remote argv first, so it is already in place when vmux
+                // reacts to the command name changing.
+                if let Some(remote) = pending_remote.take() {
+                    out.extend_from_slice(&encode_remote_termprop(&remote));
+                    last_remote = remote;
+                }
+                if let Some((name, uid)) = pending_fg.take() {
+                    out.extend_from_slice(&encode_fgproc_termprop(&name, uid));
+                    last_sent = Some((name, uid));
+                }
             }
         }
     }

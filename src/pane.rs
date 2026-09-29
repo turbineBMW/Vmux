@@ -1,7 +1,7 @@
 use crate::agent;
 use crate::app::App;
 use crate::zone::Zone;
-use crate::{keybinds, splits, state, term};
+use crate::{keybinds, remote_tab, splits, state, term};
 use gtk4 as gtk;
 use gtk4::{gdk, glib};
 use libadwaita as adw;
@@ -359,6 +359,21 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
         }
         {
             let pw = page.downgrade();
+            t.connect_termprop_changed(
+                Some(vmux::remote::REMOTE_TERMPROP_NAME),
+                move |term, _name| {
+                    remote_tab::mark_session_start(term);
+                    if let Some(page) = pw.upgrade() {
+                        refresh_title(term, &page);
+                    }
+                    if let Some(pane) = splits::pane_of(term.upcast_ref()) {
+                        refresh_tab_indicators(&pane);
+                    }
+                },
+            );
+        }
+        {
+            let pw = page.downgrade();
             let app = app.clone();
             let zw = Rc::downgrade(zone);
             t.connect_termprop_changed(
@@ -407,6 +422,27 @@ pub fn close_tab_of(terminal: &vte::Terminal) {
 
 #[allow(deprecated)] // window_title: see the connect_* note in new_tab
 fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
+    let tw = terminal.downgrade();
+    let pw = page.downgrade();
+    let remote = remote_tab::host_of(terminal, move || {
+        // ssh -G landed: redo the tooltip with the resolved host.
+        if let (Some(t), Some(p)) = (tw.upgrade(), pw.upgrade()) {
+            refresh_title(&t, &p);
+        }
+    });
+    if let Some(host) = &remote {
+        page.set_tooltip(&host.tooltip);
+        // The host alone until the remote side sets a title of its own; a
+        // title that already names the host needs no prefix.
+        let title = match remote_tab::fresh_title(terminal) {
+            Some(t) if t.to_lowercase().contains(&host.label.to_lowercase()) => t,
+            Some(t) => format!("{}: {t}", host.label),
+            None => host.label.clone(),
+        };
+        page.set_title(&title);
+        return;
+    }
+    page.set_tooltip("");
     let title = terminal
         .window_title()
         .filter(|t| !t.is_empty())
@@ -442,9 +478,6 @@ fn fg_payload(terminal: &vte::Terminal) -> (String, Option<u32>) {
     vmux::osc_scan::parse_fgproc_payload(&data)
 }
 
-/// Foreground commands that hold a session on another machine (kgx's list).
-const REMOTE_COMMANDS: &[&str] = &["ssh", "telnet", "mosh-client", "mosh", "et"];
-
 /// Recolor every tab in a pane after *its own* foreground process:
 /// `vmux-root` when that process runs as root (euid 0), `vmux-remote` when it
 /// is a remote session (ssh and friends). Unselected tabs are marked too — a
@@ -463,7 +496,12 @@ pub fn refresh_tab_indicators(pane: &gtk::Widget) {
         {
             let (name, uid) = fg_payload(&t);
             root = uid == Some(0);
-            remote = REMOTE_COMMANDS.contains(&name.as_str());
+            // The relay's argv report also catches mosh-client, whose argv[0]
+            // is a whole display string rather than a plain command name.
+            remote = !t
+                .termprop_data(vmux::remote::REMOTE_TERMPROP_NAME)
+                .is_empty()
+                || vmux::remote::is_remote_command(&name);
         }
         for (class, on) in [("vmux-root", root), ("vmux-remote", remote)] {
             if on {
