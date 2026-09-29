@@ -7,11 +7,11 @@
 //! emits OSC 7 with a hostname of its own, that wins as the label: it names
 //! the innermost machine after further hops (`ssh bastion` → `ssh db`).
 
+use crate::remote::{self, Destination, Resolved};
 use gtk4::{gio, glib};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use vmux::remote::{self, Destination, Resolved};
 use vte4 as vte;
 use vte4::prelude::*;
 

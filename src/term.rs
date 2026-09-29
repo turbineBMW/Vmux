@@ -1,11 +1,40 @@
-use crate::app::App;
 use crate::state::Config;
-use crate::zone::Zone;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use vte4 as vte;
 use vte4::prelude::*;
+
+/// What a front-end does with its terminals: where their settings come from
+/// and what their events mean (a zone's attention dot, a notification, closing
+/// the tab). The terminal keeps its host alive, so a host should hold what it
+/// stands for (a zone) weakly: a removed zone must be able to finalize even if
+/// a terminal is still being torn down.
+pub trait TerminalHost {
+    /// Settings for a new terminal (scrollback, images, the shell).
+    fn config(&self) -> Config;
+    /// Font scale for a new terminal.
+    fn font_scale(&self) -> f64 {
+        1.0
+    }
+    /// Bytes to feed the shell for a key press (bindings.conf), if bound.
+    fn text_binding(
+        &self,
+        _keyval: gtk::gdk::Key,
+        _mods: gtk::gdk::ModifierType,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+    /// The terminal took keyboard focus.
+    fn focused(&self, _term: &vte::Terminal) {}
+    /// The terminal rang its bell.
+    fn bell(&self, _term: &vte::Terminal) {}
+    /// A program asked for a desktop notification (OSC 9, 777 or 99, through
+    /// vmux-relay). Called from an idle, after the terminal's handler.
+    fn notified(&self, _term: Option<&vte::Terminal>, _title: &str, _body: &str) {}
+    /// The terminal's shell exited.
+    fn exited(&self, _term: &vte::Terminal) {}
+}
 
 /// Register the custom termprops vmux-relay uses to talk back to vmux (the
 /// safe vte4 crate does not wrap the install call). vte requires these to run
@@ -13,7 +42,7 @@ use vte4::prelude::*;
 pub fn install_notify_termprop() {
     // Ephemeral: the notification value is only readable inside its handler.
     install_termprop(
-        vmux::osc_scan::TERMPROP_NAME,
+        crate::osc_scan::TERMPROP_NAME,
         vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL,
     );
 }
@@ -22,9 +51,9 @@ pub fn install_notify_termprop() {
 /// Non-ephemeral so refresh_title can read it on demand and vte de-dups
 /// unchanged values; like the notify prop it must precede the first terminal.
 pub fn install_fgproc_termprop() {
-    install_termprop(vmux::osc_scan::FGPROC_TERMPROP_NAME, 0);
+    install_termprop(crate::osc_scan::FGPROC_TERMPROP_NAME, 0);
     // The remote session's argv (tab host label): same lifetime rules.
-    install_termprop(vmux::remote::REMOTE_TERMPROP_NAME, 0);
+    install_termprop(crate::remote::REMOTE_TERMPROP_NAME, 0);
 }
 
 fn install_termprop(name: &str, flags: u32) {
@@ -38,12 +67,13 @@ fn install_termprop(name: &str, flags: u32) {
 }
 
 /// Build a terminal leaf (ScrolledWindow wrapping a vte::Terminal) and spawn
-/// the configured shell in it. Handlers capture Weak<Zone> only — a removed
-/// zone must be able to finalize even if a terminal is still being torn down.
-pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::ScrolledWindow {
+/// the configured shell in it, through vmux-relay. `host` receives the
+/// terminal's events.
+pub fn build(host: Rc<dyn TerminalHost>, cwd: String) -> gtk::ScrolledWindow {
     let term = vte::Terminal::new();
     term.add_css_class("vmux-terminal");
-    configure(&term, &app.config.borrow(), app.font_scale.get());
+    let config = host.config();
+    configure(&term, &config, host.font_scale());
     // A newly created widget may not have its final CSS-derived Pango font
     // until it joins the mapped widget tree. Re-apply at that point so tabs
     // opened after startup receive the configured family and size too.
@@ -63,26 +93,11 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
 
     let focus = gtk::EventControllerFocus::new();
     {
-        let zone = zone.clone();
+        let host = host.clone();
         let tw = term.downgrade();
         focus.connect_enter(move |_| {
-            if let (Some(zone), Some(term)) = (zone.upgrade(), tw.upgrade()) {
-                if std::env::var_os("VMUX_DEBUG_FOCUS").is_some() {
-                    let y = term
-                        .root()
-                        .and_then(|r| term.compute_bounds(&r))
-                        .map(|b| b.y());
-                    eprintln!(
-                        "focus-enter: zone={} term={:?} y={:?}",
-                        zone.name.borrow(),
-                        term.as_ptr(),
-                        y
-                    );
-                }
-                zone.last_focused.set(Some(&term));
-                if let Some(pane) = crate::splits::pane_of(term.upcast_ref()) {
-                    crate::splits::remember_focused_pane(&pane);
-                }
+            if let Some(term) = tw.upgrade() {
+                host.focused(&term);
             }
         });
     }
@@ -93,68 +108,115 @@ pub fn build_leaf(app: &Rc<App>, zone: &Weak<Zone>, cwd: String) -> gtk::Scrolle
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
-        let app = app.clone();
+        let host = host.clone();
         let tw = term.downgrade();
         keys.connect_key_pressed(move |_, keyval, _code, state| {
             let Some(term) = tw.upgrade() else {
                 return glib::Propagation::Proceed;
             };
             let mods = state & gtk::accelerator_get_default_mod_mask();
-            let bindings = app.text_bindings.borrow();
-            let Some(b) = bindings.iter().find(|b| b.matches(keyval, mods)) else {
+            let Some(bytes) = host.text_binding(keyval, mods) else {
                 return glib::Propagation::Proceed;
             };
-            term.feed_child(&b.bytes);
+            term.feed_child(&bytes);
             glib::Propagation::Stop
         });
     }
     scrolled.add_controller(keys);
 
     {
-        let app = app.clone();
-        let zone = zone.clone();
-        term.connect_bell(move |_| {
-            if let Some(zone) = zone.upgrade() {
-                app.on_bell(&zone);
-            }
-        });
+        let host = host.clone();
+        term.connect_bell(move |term| host.bell(term));
     }
     {
-        let app = app.clone();
-        let zone = zone.clone();
-        term.connect_termprop_changed(Some(vmux::osc_scan::TERMPROP_NAME), move |term, _name| {
+        let host = host.clone();
+        term.connect_termprop_changed(Some(crate::osc_scan::TERMPROP_NAME), move |term, _name| {
             // Ephemeral termprop: the value is only readable during this
             // emission, and vte allows nothing but get_termprop_* calls in
             // the handler — copy the data out and defer the real work.
-            let data = term.termprop_data(vmux::osc_scan::TERMPROP_NAME);
-            let Ok(msg) = serde_json::from_slice::<vmux::osc_scan::NotifyPayload>(&data) else {
+            let data = term.termprop_data(crate::osc_scan::TERMPROP_NAME);
+            let Ok(msg) = serde_json::from_slice::<crate::osc_scan::NotifyPayload>(&data) else {
                 return;
             };
-            let app = app.clone();
-            let zone = zone.clone();
+            let host = host.clone();
             let tw = term.downgrade();
             glib::idle_add_local_once(move || {
-                if let Some(zone) = zone.upgrade() {
-                    app.on_notify(&zone, tw.upgrade().as_ref(), &msg.title, &msg.body);
-                }
+                host.notified(tw.upgrade().as_ref(), &msg.title, &msg.body);
             });
         });
     }
     {
-        let app = app.clone();
-        let zone = zone.clone();
-        term.connect_child_exited(move |term, _status| {
-            if let Some(zone) = zone.upgrade() {
-                app.on_term_exited(&zone, term);
-            }
-        });
+        let host = host.clone();
+        term.connect_child_exited(move |term, _status| host.exited(term));
     }
 
     add_touch_scroll(&term);
 
-    let argv = shell_argv(&app.config.borrow());
+    let argv = shell_argv(&config);
     spawn_argv(&term, &cwd, &argv);
     scrolled
+}
+
+/// The (command name, euid) pair vmux-relay last reported for the
+/// terminal's foreground process (the fgproc termprop). Empty name and no uid
+/// when the relay never reported (no relay, or the shell has been in front
+/// since startup with an unreadable uid).
+pub fn fg_payload(terminal: &vte::Terminal) -> (String, Option<u32>) {
+    let data = terminal.termprop_data(crate::osc_scan::FGPROC_TERMPROP_NAME);
+    crate::osc_scan::parse_fgproc_payload(&data)
+}
+
+/// The foreground command vmux-relay last reported, or None when unset or
+/// empty (the shell itself is in front).
+pub fn fg_command(terminal: &vte::Terminal) -> Option<String> {
+    let (name, _) = fg_payload(terminal);
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// What a tab shows for its terminal.
+pub struct TabLabel {
+    /// None: nothing to go on yet; keep the tab's current title.
+    pub title: Option<String>,
+    /// Pango markup naming the resolved host, for a remote session.
+    pub tooltip: Option<String>,
+}
+
+/// The label for a terminal's tab. A remote session (ssh and friends) shows
+/// its host, then the remote title; otherwise the window title, then the
+/// foreground command, then the directory (the live one from OSC 7, else
+/// `cached_cwd`, the last one known for the tab). `on_resolved` runs once
+/// `ssh -G` has resolved a remote host, to label the tab again.
+#[allow(deprecated)] // window_title: vte's replacement is the termprop API
+pub fn tab_label(
+    terminal: &vte::Terminal,
+    cached_cwd: Option<&str>,
+    on_resolved: impl FnOnce() + 'static,
+) -> TabLabel {
+    if let Some(host) = crate::remote_tab::host_of(terminal, on_resolved) {
+        // The host alone until the remote side sets a title of its own; a
+        // title that already names the host needs no prefix.
+        let title = match crate::remote_tab::fresh_title(terminal) {
+            Some(t) if t.to_lowercase().contains(&host.label.to_lowercase()) => t,
+            Some(t) => format!("{}: {t}", host.label),
+            None => host.label.clone(),
+        };
+        return TabLabel {
+            title: Some(title),
+            tooltip: Some(host.tooltip),
+        };
+    }
+    let title = terminal
+        .window_title()
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .or_else(|| fg_command(terminal))
+        .or_else(|| cwd_of(terminal).map(|c| crate::state::display_name(&c)))
+        .or_else(|| cached_cwd.map(crate::state::display_name));
+    TabLabel {
+        title,
+        tooltip: None,
+    }
 }
 
 /// Vertical distance a finger must travel before a touch drag is treated as a

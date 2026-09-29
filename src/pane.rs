@@ -321,7 +321,7 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
     let cwd = cwd
         .filter(|c| std::path::Path::new(c).is_dir())
         .unwrap_or_else(|| zone.cwd.clone());
-    let leaf = term::build_leaf(app, &Rc::downgrade(zone), cwd.clone());
+    let leaf = crate::leaf::build_leaf(app, &Rc::downgrade(zone), cwd.clone());
     let page = view.append(&leaf);
     page.set_keyword(&cwd);
     page.set_title(&state::display_name(&cwd));
@@ -420,63 +420,25 @@ pub fn close_tab_of(terminal: &vte::Terminal) {
     }
 }
 
-#[allow(deprecated)] // window_title: see the connect_* note in new_tab
 fn refresh_title(terminal: &vte::Terminal, page: &adw::TabPage) {
     let tw = terminal.downgrade();
     let pw = page.downgrade();
-    let remote = remote_tab::host_of(terminal, move || {
+    // Shells without OSC 7 (e.g. bash) report no live cwd: the cwd vmux
+    // cached on the page is the fallback.
+    let cached = page.keyword().filter(|k| !k.is_empty());
+    let label = term::tab_label(terminal, cached.as_deref(), move || {
         // ssh -G landed: redo the tooltip with the resolved host.
         if let (Some(t), Some(p)) = (tw.upgrade(), pw.upgrade()) {
             refresh_title(&t, &p);
         }
     });
-    if let Some(host) = &remote {
-        page.set_tooltip(&host.tooltip);
-        // The host alone until the remote side sets a title of its own; a
-        // title that already names the host needs no prefix.
-        let title = match remote_tab::fresh_title(terminal) {
-            Some(t) if t.to_lowercase().contains(&host.label.to_lowercase()) => t,
-            Some(t) => format!("{}: {t}", host.label),
-            None => host.label.clone(),
-        };
+    page.set_tooltip(label.tooltip.as_deref().unwrap_or(""));
+    if let Some(title) = label.title {
         page.set_title(&title);
-        return;
     }
-    page.set_tooltip("");
-    let title = terminal
-        .window_title()
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_string())
-        .or_else(|| fg_command(terminal))
-        .or_else(|| term::cwd_of(terminal).map(|c| state::display_name(&c)))
-        .or_else(|| {
-            // Shells without OSC 7 (e.g. bash) report no live cwd, so once a
-            // finished command's name clears, fall back to the cwd vmux cached
-            // on the page — otherwise the title would stay stuck on the
-            // command instead of reverting to the directory.
-            page.keyword()
-                .filter(|k| !k.is_empty())
-                .map(|k| state::display_name(&k))
-        })
-        .unwrap_or_else(|| page.title().to_string());
-    page.set_title(&title);
 }
 
-/// The foreground command vmux-relay last reported via the fgproc termprop,
-/// or None when unset/empty (the shell itself is in front).
-pub fn fg_command(terminal: &vte::Terminal) -> Option<String> {
-    let (name, _) = fg_payload(terminal);
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_string())
-}
-
-/// The (command name, euid) pair vmux-relay last reported via the fgproc
-/// termprop. Empty name/None uid when the relay never reported (no relay, or
-/// the shell has been in front since startup with an unreadable uid).
-fn fg_payload(terminal: &vte::Terminal) -> (String, Option<u32>) {
-    let data = terminal.termprop_data(vmux::osc_scan::FGPROC_TERMPROP_NAME);
-    vmux::osc_scan::parse_fgproc_payload(&data)
-}
+pub use vmux::term::{fg_command, fg_payload};
 
 /// Recolor every tab in a pane after *its own* foreground process:
 /// `vmux-root` when that process runs as root (euid 0), `vmux-remote` when it
