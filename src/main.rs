@@ -7,6 +7,7 @@ mod notify;
 mod omarchy;
 mod open_path_dialog;
 mod pane;
+mod remote_tab;
 mod splits;
 mod state;
 mod style;

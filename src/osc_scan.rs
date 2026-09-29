@@ -97,7 +97,7 @@ pub fn parse_fgproc_payload(data: &[u8]) -> (String, Option<u32>) {
 
 /// Frame one termprop OSC: `OSC 666 ; name=<base64(value)> ST`. Always
 /// ST-terminated — vte rejects a BEL-terminated termprop OSC.
-fn osc666_termprop(name: &str, value: &[u8]) -> Vec<u8> {
+pub fn osc666_termprop(name: &str, value: &[u8]) -> Vec<u8> {
     let b64 = base64_encode(value);
     let mut out = Vec::with_capacity(b64.len() + name.len() + 16);
     out.extend_from_slice(b"\x1b]666;");
@@ -399,7 +399,7 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-fn base64_decode(data: &[u8]) -> Option<Vec<u8>> {
+pub fn base64_decode(data: &[u8]) -> Option<Vec<u8>> {
     let data: Vec<u8> = data
         .iter()
         .copied()

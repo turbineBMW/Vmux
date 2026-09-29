@@ -41,6 +41,11 @@ the split. Tabs can be dragged between panes.
   image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).
   Stock libvte has no image support on GTK4, so Vmux links its own
   [libvte fork](https://github.com/turbineBMW/vte) (branch `image-support`).
+- **Remote hosts on tabs** — a tab running `ssh`, `mosh`, `et` or `telnet`
+  is titled with the host it's connected to (the name you typed, e.g. an
+  `~/.ssh/config` alias). Hover it for what `ssh -G` resolves that to. If the
+  remote shell emits OSC 7, a further hop (`ssh bastion`, then `ssh db`)
+  relabels the tab with the innermost machine.
 - **Git status** — each zone shows its branch and working-tree state under its name in the sidebar, in colours you can theme.
 - **Live CSS themes** — every colour, font and chrome setting is a CSS token
   edited from Preferences or by hand; changes apply instantly and can be

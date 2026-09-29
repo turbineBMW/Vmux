@@ -2,3 +2,4 @@
 //! and the `vmux-relay` PTY shim.
 
 pub mod osc_scan;
+pub mod remote;
