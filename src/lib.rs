@@ -9,6 +9,7 @@ pub mod git;
 pub mod notify;
 pub mod omarchy;
 pub mod osc_scan;
+pub mod relay;
 pub mod remote;
 pub mod remote_tab;
 pub mod state;

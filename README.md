@@ -197,12 +197,12 @@ Source layout: `src/lib.rs` is the core, shared by the desktop app, the PTY
 shim and other front-ends (such as a phone app): zones and tabs state
 (`state`), building terminals (`term`, whose `TerminalHost` trait is how a
 front-end receives a terminal's focus, bell, notifications and exit), the
-relay protocol (`osc_scan`), remote-host labels (`remote`, `remote_tab`),
+relay (`relay`, `osc_scan`), remote-host labels (`remote`, `remote_tab`),
 coding-agent detection (`agents`), desktop notifications (`notify`), git
 status (`git`) and theming (`omarchy`, `style`, `text_bindings`).
 `src/main.rs` is the desktop app, with one module per UI concern (`zone`,
 `pane`, `splits`, `leaf`, `appearance`, `keybinds`, …), and
-`src/bin/vmux-relay.rs` the PTY shim.
+`src/bin/vmux-relay.rs` the PTY shim (its code is the library's `relay`).
 
 ## Known limitations
 
