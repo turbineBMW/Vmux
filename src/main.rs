@@ -1,21 +1,18 @@
 mod agent;
 mod app;
 mod appearance;
-mod git;
 mod keybinds;
-mod notify;
-mod omarchy;
+mod leaf;
 mod open_path_dialog;
 mod pane;
-mod remote_tab;
 mod splits;
-mod state;
-mod style;
-mod term;
-mod text_bindings;
 mod window;
 mod zone;
 mod zone_switcher;
+
+// The core lives in the library; importing its modules here keeps the
+// desktop modules' `crate::state`, `crate::term`, ... paths working.
+use vmux::{git, notify, omarchy, remote_tab, state, style, term, text_bindings};
 
 use gtk::prelude::*;
 use gtk4 as gtk;
