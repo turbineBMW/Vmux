@@ -4,7 +4,8 @@
 #
 # PKG_CONFIG_PATH makes the vte4-sys crate pick the vendored library over the
 # system one at build time; the rpaths let the binary find it at run time both
-# from the source tree (target/{debug,release}/vmux) and once installed to
+# from the source tree (target/{debug,release}/vmux, and test binaries in
+# target/{debug,release}/deps) and once installed to
 # ~/.local/bin (install.sh copies the library to ~/.local/lib/vmux).
 [env]
 PKG_CONFIG_PATH = { value = "vendor/vte/lib/pkgconfig", relative = true }
@@ -12,5 +13,7 @@ PKG_CONFIG_PATH = { value = "vendor/vte/lib/pkgconfig", relative = true }
 [build]
 rustflags = [
   "-C", "link-arg=-Wl,-rpath,$ORIGIN/../../vendor/vte/lib",
+  # Test binaries sit one level deeper, in target/{debug,release}/deps.
+  "-C", "link-arg=-Wl,-rpath,$ORIGIN/../../../vendor/vte/lib",
   "-C", "link-arg=-Wl,-rpath,$ORIGIN/../lib/vmux",
 ]
