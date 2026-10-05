@@ -213,7 +213,7 @@ pub fn show_settings(app: &Rc<App>) {
     let agent_group = adw::PreferencesGroup::new();
     agent_group.set_title("Coding agents");
     agent_group.set_description(Some(
-        "Claude Code and Codex are detected from each terminal's foreground command, title and screen",
+        "Claude Code, Codex, Gemini CLI, OpenCode and Copilot CLI are detected from each terminal's foreground command, title and screen",
     ));
     let sort_row = adw::SwitchRow::builder()
         .title("Move working workspaces to the top")
@@ -265,6 +265,19 @@ pub fn show_settings(app: &Rc<App>) {
             app.agent_panel.refresh(&app);
         });
     }
+    let notify_row = adw::SwitchRow::builder()
+        .title("Notify when an agent needs you")
+        .subtitle("When an agent out of view asks for input or finishes. Claude Code sends its own notifications")
+        .active(app.config.borrow().agent_notifications)
+        .build();
+    {
+        let app = app.clone();
+        notify_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().agent_notifications = row.is_active();
+            app.schedule_save();
+        });
+    }
+    agent_group.add(&notify_row);
     agent_group.add(&panel_row);
     agent_group.add(&order_row);
     general.add(&agent_group);

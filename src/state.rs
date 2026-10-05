@@ -32,6 +32,9 @@ pub struct Config {
     /// Move a zone to the top of the sidebar when a coding agent (Claude
     /// Code, Codex) starts working in it.
     pub agent_sort_to_top: bool,
+    /// Raise a desktop notification when an agent out of view starts waiting
+    /// on the user or finishes. Off by default: Claude Code sends its own.
+    pub agent_notifications: bool,
     /// Show the sidebar's Agents section: every running coding agent, from
     /// every zone.
     pub agent_panel: bool,
@@ -60,6 +63,7 @@ impl Default for Config {
             notify_on_bell: false,
             notification_sound: Sound::default(),
             agent_sort_to_top: true,
+            agent_notifications: false,
             agent_panel: true,
             agent_panel_order: AgentOrder::default(),
             agent_panel_collapsed: false,
