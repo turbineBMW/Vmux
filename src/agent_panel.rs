@@ -179,7 +179,10 @@ impl AgentPanel {
             agent::style_dot(&row.dot, e.status);
             row.agent.set_label(e.agent);
             row.zone.set_label(&zone.name.borrow());
-            row.task.set_label(&task_of(&e.term));
+            // Agents that set no title have no task to show.
+            let task = task_of(&e.term);
+            row.task.set_visible(!task.is_empty());
+            row.task.set_label(&task);
             row.row
                 .set_tooltip_text(Some(&agent::describe(e.agent, e.status)));
         }

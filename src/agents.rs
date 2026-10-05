@@ -1,8 +1,9 @@
 //! Which coding agent is in the foreground of a terminal, and what it is
 //! doing. Three signals: the foreground command vmux-relay reports (which
 //! agent, if any), the terminal's OSC window title (busy, or waiting on the
-//! user) and, for agents whose title can't say they are waiting on the user,
-//! the bottom of the live screen (an approval or question dialog).
+//! user) and the bottom of the live screen, for what an agent's title
+//! doesn't say (an approval or question dialog, or for agents that leave
+//! the title alone, being busy at all).
 
 /// What a detected agent is doing right now, least urgent first: the derived
 /// order is what [`aggregate`] ranks by.
@@ -25,20 +26,31 @@ pub struct Detected {
     pub activity: Activity,
 }
 
-/// One rule-table entry: how a given command name reports its state.
+/// One rule-table entry: how an agent reports its state.
 struct Rule {
-    command: &'static str,
+    /// Foreground command names it runs as (see `relay::command_name` for
+    /// how scripts under node and friends are named).
+    commands: &'static [&'static str],
     label: &'static str,
     working: fn(&str) -> bool,
     needs_input: fn(&str) -> bool,
     /// Reads the live screen for a dialog waiting on the user. `None` when
     /// the title says everything.
     screen_needs_input: Option<fn(&str) -> bool>,
+    /// Reads the live screen for a turn in progress, for agents whose title
+    /// doesn't show it.
+    screen_working: Option<fn(&str) -> bool>,
 }
 
+fn never(_: &str) -> bool {
+    false
+}
+
+/// Screen patterns for the agents below Claude and Codex follow herdr's
+/// manifests (gemini.toml, opencode.toml, github-copilot.toml).
 const RULES: &[Rule] = &[
     Rule {
-        command: "claude",
+        commands: &["claude"],
         label: "Claude",
         // Claude Code leads the title with a spinner glyph while busy:
         // braille up to 2.1.227, half-circles from 2.1.228.
@@ -47,11 +59,12 @@ const RULES: &[Rule] = &[
             matches!((chars.next(), chars.next()), (Some(c), Some(' ')) if is_spinner(c))
         },
         // The title only says busy or not; approvals show on screen.
-        needs_input: |_| false,
+        needs_input: never,
         screen_needs_input: Some(claude_screen_needs_input),
+        screen_working: None,
     },
     Rule {
-        command: "codex",
+        commands: &["codex"],
         label: "Codex",
         // Codex puts a lone braille spinner token somewhere in the title.
         working: |title| {
@@ -62,11 +75,41 @@ const RULES: &[Rule] = &[
         },
         needs_input: |title| title.contains("Action Required"),
         screen_needs_input: Some(codex_screen_needs_input),
+        screen_working: None,
+    },
+    Rule {
+        commands: &["gemini"],
+        label: "Gemini",
+        working: never,
+        needs_input: never,
+        screen_needs_input: Some(gemini_screen_needs_input),
+        // "(esc to cancel, 12s)" beside the spinner.
+        screen_working: Some(|screen| screen.to_lowercase().contains("esc to cancel")),
+    },
+    Rule {
+        commands: &["opencode"],
+        label: "OpenCode",
+        working: never,
+        needs_input: never,
+        screen_needs_input: Some(opencode_screen_needs_input),
+        screen_working: Some(opencode_screen_working),
+    },
+    Rule {
+        commands: &["copilot"],
+        label: "Copilot",
+        working: never,
+        needs_input: never,
+        screen_needs_input: Some(copilot_screen_needs_input),
+        screen_working: Some(copilot_screen_working),
     },
 ];
 
 fn is_spinner(c: char) -> bool {
     matches!(c, '\u{2800}'..='\u{28FF}' | '\u{25D0}'..='\u{25D3}')
+}
+
+fn rule_for(command: &str) -> Option<&'static Rule> {
+    RULES.iter().find(|r| r.commands.contains(&command))
 }
 
 /// Classify one terminal from its foreground command and window title.
@@ -75,27 +118,34 @@ pub fn detect(command: &str, title: &str) -> Option<Detected> {
     detect_with_screen(command, title, String::new)
 }
 
-/// [`detect`], also reading the live screen for agents whose title can't
-/// report a pending approval. `screen` is only called when its answer could
-/// change the result, so a front-end can pass a lazy read of the terminal.
+/// [`detect`], also reading the live screen where the agent's rules need it.
+/// `screen` is called at most once, and only when its answer could change
+/// the result, so a front-end can pass a lazy read of the terminal.
 pub fn detect_with_screen(
     command: &str,
     title: &str,
     screen: impl FnOnce() -> String,
 ) -> Option<Detected> {
-    let rule = RULES.iter().find(|r| r.command == command)?;
-    // A busy title wins: the agents covered here stop their spinner while a
-    // dialog waits on the user, so a spinning title means none is up.
+    let rule = rule_for(command)?;
+    // A busy title wins: the agents that report it there stop their spinner
+    // while a dialog waits on the user, so a spinning title means none is up.
     let activity = if (rule.working)(title) {
         Activity::Working
-    } else if (rule.needs_input)(title)
-        || rule
-            .screen_needs_input
-            .is_some_and(|f| f(&bottom_lines(&screen(), SCREEN_LINES)))
-    {
+    } else if (rule.needs_input)(title) {
         Activity::NeedsInput
-    } else {
+    } else if rule.screen_needs_input.is_none() && rule.screen_working.is_none() {
         Activity::Idle
+    } else {
+        let screen = bottom_lines(&screen(), SCREEN_LINES);
+        // A dialog outranks a working hint: some agents keep "esc to cancel"
+        // on screen while asking.
+        if rule.screen_needs_input.is_some_and(|f| f(&screen)) {
+            Activity::NeedsInput
+        } else if rule.screen_working.is_some_and(|f| f(&screen)) {
+            Activity::Working
+        } else {
+            Activity::Idle
+        }
     };
     Some(Detected {
         agent: rule.label,
@@ -103,13 +153,24 @@ pub fn detect_with_screen(
     })
 }
 
-/// Whether `command` is an agent whose state can depend on the screen, so a
-/// front-end knows which terminals are worth re-reading as their output
-/// changes.
-pub fn reads_screen(command: &str) -> bool {
-    RULES
-        .iter()
-        .any(|r| r.command == command && r.screen_needs_input.is_some())
+/// When a front-end should re-read an agent's screen as its output changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenUse {
+    /// Title and command say everything (or no agent).
+    Never,
+    /// Only while it isn't working: a working turn is followed through the
+    /// title, which changes whenever the state does.
+    WhileIdle,
+    /// Always: the screen is the only place it shows it is working.
+    Always,
+}
+
+pub fn screen_use(command: &str) -> ScreenUse {
+    match rule_for(command) {
+        Some(r) if r.screen_working.is_some() => ScreenUse::Always,
+        Some(r) if r.screen_needs_input.is_some() => ScreenUse::WhileIdle,
+        _ => ScreenUse::Never,
+    }
 }
 
 /// How many non-empty lines from the bottom of the screen the screen rules
@@ -201,6 +262,86 @@ fn codex_screen_needs_input(screen: &str) -> bool {
     .any(|s| lower.contains(s))
 }
 
+/// Gemini CLI's confirmation dialogs: apply a change, allow a command, or a
+/// "do you want to proceed" with a Yes option.
+fn gemini_screen_needs_input(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    lower.contains("│ apply this change")
+        || lower.contains("│ allow execution")
+        || (lower.contains("yes")
+            && (lower.contains("waiting for user confirmation")
+                || lower.contains("do you want to proceed")))
+        || lower.lines().any(|l| {
+            l.trim_start()
+                .strip_prefix('❯')
+                .is_some_and(|rest| rest.contains("yes") || rest.contains("allow"))
+        })
+}
+
+/// OpenCode's permission prompt, or one of its dialogs: a dismiss footer
+/// with a confirm/submit/toggle hint and a select or tab hint.
+fn opencode_screen_needs_input(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    lower.contains("△ permission required")
+        || (lower.contains("esc dismiss")
+            && ["enter confirm", "enter submit", "enter toggle"]
+                .iter()
+                .any(|s| lower.contains(s))
+            && (lower.contains("↑↓ select") || lower.contains("⇆ tab")))
+}
+
+/// OpenCode at work: an interrupt hint, or its block progress bar.
+fn opencode_screen_working(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    ["esc to interrupt", "ctrl+c to interrupt"]
+        .iter()
+        .any(|s| lower.contains(s))
+        || lower.lines().any(|l| {
+            l.contains("opencode")
+                && (l.contains("esc interrupt") || l.contains("esc again to interrupt"))
+        })
+        || has_run_of(screen, |c| c == '■' || c == '⬝', 4)
+}
+
+/// Whether `screen` has `n` consecutive characters matching `f`.
+fn has_run_of(screen: &str, f: impl Fn(char) -> bool, n: usize) -> bool {
+    let mut run = 0;
+    for c in screen.chars() {
+        run = if f(c) { run + 1 } else { 0 };
+        if run >= n {
+            return true;
+        }
+    }
+    false
+}
+
+/// Copilot CLI's selection dialogs: a cancel footer with an enter hint.
+fn copilot_screen_needs_input(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    (lower.contains("esc to cancel") || lower.contains("esc cancel"))
+        && [
+            "enter to select",
+            "enter to confirm",
+            "enter to submit",
+            "enter accept",
+        ]
+        .iter()
+        .any(|s| lower.contains(s))
+}
+
+/// Copilot CLI at work: its cancel or interrupt hint, or waiting on its
+/// background agents.
+fn copilot_screen_working(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    ["esc to cancel", "esc cancel", "esc interrupt"]
+        .iter()
+        .any(|s| lower.contains(s))
+        || lower.lines().any(|l| {
+            l.trim_start()
+                .starts_with("◎ waiting for background agents")
+        })
+}
+
 /// The roll-up of several terminals: the most urgent one wins, so an agent
 /// waiting on the user is never hidden behind another that is working.
 pub fn aggregate(items: impl IntoIterator<Item = Detected>) -> Option<Detected> {
@@ -283,8 +424,9 @@ mod tests {
         assert_eq!(detect("zsh", "⠋ anything"), None);
         assert_eq!(detect("", "⠋ anything"), None);
         assert_eq!(detect("vim", "Action Required"), None);
-        assert!(!reads_screen("zsh"));
-        assert!(reads_screen("claude"));
+        assert_eq!(screen_use("zsh"), ScreenUse::Never);
+        assert_eq!(screen_use("claude"), ScreenUse::WhileIdle);
+        assert_eq!(screen_use("gemini"), ScreenUse::Always);
     }
 
     #[test]
@@ -405,6 +547,66 @@ Do you want to proceed?
             screen.push_str(&format!("line {i}\n\n"));
         }
         assert_eq!(claude_on(&screen), Some(Activity::Idle));
+    }
+
+    fn on(command: &str, screen: &str) -> Option<Activity> {
+        detect_with_screen(command, "", || screen.to_string()).map(|d| d.activity)
+    }
+
+    #[test]
+    fn gemini_reads_everything_from_the_screen() {
+        assert_eq!(detect("gemini", "").map(|d| d.agent), Some("Gemini"));
+        assert_eq!(on("gemini", "> Type your message"), Some(Activity::Idle));
+        assert_eq!(
+            on("gemini", "⠼ Reading files (esc to cancel, 4s)"),
+            Some(Activity::Working)
+        );
+        let confirm = "\
+╭──────────────────────────╮
+│ Shell cargo test         │
+│ Allow execution?         │
+│ ● 1. Yes, allow once     │
+╰──────────────────────────╯
+⠼ Waiting for user confirmation... (esc to cancel, 9s)";
+        assert_eq!(on("gemini", confirm), Some(Activity::NeedsInput));
+    }
+
+    #[test]
+    fn opencode_permission_and_progress() {
+        assert_eq!(
+            on("opencode", "△ Permission required\nbash: ls"),
+            Some(Activity::NeedsInput)
+        );
+        assert_eq!(
+            on("opencode", "⬝⬝⬝■■■■⬝  esc interrupt"),
+            Some(Activity::Working)
+        );
+        assert_eq!(
+            on("opencode", "Build  claude-opus\nctrl+p commands"),
+            Some(Activity::Idle)
+        );
+        // Three blocks are not a progress bar.
+        assert_eq!(on("opencode", "■■■ done"), Some(Activity::Idle));
+    }
+
+    #[test]
+    fn copilot_dialog_outranks_its_cancel_hint() {
+        assert_eq!(
+            on(
+                "copilot",
+                "Run this command?\n❯ 1. Yes\nEnter to select · Esc to cancel"
+            ),
+            Some(Activity::NeedsInput)
+        );
+        assert_eq!(
+            on("copilot", "∙ Thinking (Esc to cancel)"),
+            Some(Activity::Working)
+        );
+        assert_eq!(
+            on("copilot", "◎ Waiting for background agents · 2 running"),
+            Some(Activity::Working)
+        );
+        assert_eq!(on("copilot", "> Ask Copilot"), Some(Activity::Idle));
     }
 
     #[test]

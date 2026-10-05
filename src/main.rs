@@ -152,10 +152,20 @@ tabbar tab:selected:active { background-color: color-mix(in srgb, currentColor 1
 fn main() -> glib::ExitCode {
     // vte merges spawn envv OVER the parent environment, so anything not
     // scrubbed here leaks into every shell. Drop the tmux identity of
-    // whatever launched vmux (single-threaded this early, so this is safe).
-    unsafe {
-        std::env::remove_var("TMUX");
-        std::env::remove_var("TMUX_PANE");
+    // whatever launched vmux, and the session of a coding agent that did
+    // (started from a Claude Code or Codex shell, every new tab would look
+    // like that agent's child session). Single-threaded this early, so this
+    // is safe. The agent list follows herdr's.
+    for key in [
+        "TMUX",
+        "TMUX_PANE",
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CODEX_THREAD_ID",
+    ] {
+        unsafe { std::env::remove_var(key) };
     }
     // Force integer-scale rendering on fractional-scaled displays so diagonal
     // glyphs (powerline separators) don't stair-step: GTK rasterizes at 2× and

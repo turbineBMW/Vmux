@@ -179,29 +179,93 @@ fn write_fd(fd: i32, buf: &[u8]) -> IoRes {
     }
 }
 
-/// Basename of the foreground process group's command on the inner pty, for
-/// use as a tab title, plus its raw /proc cmdline when it is a remote session
-/// (empty otherwise). Prefers /proc/<pgid>/cmdline (untruncated argv[0]) and
-/// falls back to /proc/<pgid>/comm; None on any read failure (caller retries).
+/// The foreground process group's command name on the inner pty, for use
+/// as a tab title and for agent detection (see [`command_name`]), plus its
+/// raw /proc cmdline when it is a remote session (empty otherwise). Prefers
+/// /proc/<pgid>/cmdline (untruncated argv) and falls back to
+/// /proc/<pgid>/comm; None on any read failure (caller retries).
 fn fg_name(pgid: libc::pid_t) -> Option<(String, Vec<u8>)> {
     if let Ok(cmdline) = std::fs::read(format!("/proc/{pgid}/cmdline")) {
-        let arg0 = cmdline.split(|&b| b == 0).next().unwrap_or(&[]);
-        if !arg0.is_empty() {
-            let s = String::from_utf8_lossy(arg0);
-            let base = s.rsplit('/').next().unwrap_or("");
-            if !base.is_empty() {
-                let remote = if is_remote_command(&s) {
-                    cmdline.clone()
-                } else {
-                    Vec::new()
-                };
-                return Some((base.to_string(), remote));
-            }
+        let argv: Vec<String> = cmdline
+            .split(|&b| b == 0)
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect();
+        let name = command_name(&argv);
+        if !name.is_empty() {
+            let remote = if is_remote_command(&argv[0]) {
+                cmdline.clone()
+            } else {
+                Vec::new()
+            };
+            return Some((name, remote));
         }
     }
     let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;
     let comm = comm.trim_end_matches('\n');
     (!comm.is_empty()).then(|| (comm.to_string(), Vec::new()))
+}
+
+/// The name a command goes by: argv[0]'s basename, except that a script run
+/// by an interpreter (node, bun, deno, python) is named after the script —
+/// `node /usr/bin/gemini` is "gemini", not "node" — and an npm package's
+/// generic entry point (`…/@google/gemini-cli/dist/index.js`) after the
+/// command that package installs. Empty when argv[0] is.
+pub fn command_name(argv: &[String]) -> String {
+    let Some(arg0) = argv.first() else {
+        return String::new();
+    };
+    let base = basename(arg0);
+    if !is_interpreter(base) {
+        return base.to_string();
+    }
+    // The script: the first argument that isn't an option (or deno's `run`).
+    let script = argv[1..]
+        .iter()
+        .find(|a| !a.starts_with('-') && !(base == "deno" && a.as_str() == "run"));
+    let Some(script) = script else {
+        return base.to_string();
+    };
+    if let Some(command) = command_of_package(script) {
+        return command.to_string();
+    }
+    let name = basename(script);
+    let stem = [".js", ".mjs", ".cjs", ".ts", ".py"]
+        .iter()
+        .find_map(|ext| name.strip_suffix(ext))
+        .unwrap_or(name);
+    if stem.is_empty() {
+        base.to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn is_interpreter(name: &str) -> bool {
+    matches!(name, "node" | "nodejs" | "bun" | "deno")
+        || name
+            .strip_prefix("python")
+            .is_some_and(|v| v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+}
+
+/// Coding agents published as npm packages, by package path, and the command
+/// each installs: run straight from the package, their entry point is named
+/// something generic like `index.js`.
+fn command_of_package(script: &str) -> Option<&'static str> {
+    const PACKAGES: &[(&str, &str)] = &[
+        ("/node_modules/@anthropic-ai/claude-code/", "claude"),
+        ("/node_modules/@openai/codex/", "codex"),
+        ("/node_modules/@google/gemini-cli/", "gemini"),
+        ("/node_modules/opencode-ai/", "opencode"),
+        ("/node_modules/@github/copilot/", "copilot"),
+    ];
+    PACKAGES
+        .iter()
+        .find(|(path, _)| script.contains(path))
+        .map(|(_, command)| *command)
 }
 
 /// Effective uid of the foreground process group leader, from the Uid: line
@@ -531,5 +595,59 @@ fn set_nonblock(fd: i32) {
         if fl >= 0 {
             libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_name;
+
+    fn name(argv: &[&str]) -> String {
+        command_name(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn plain_commands_are_their_basename() {
+        assert_eq!(name(&["/usr/bin/nvim", "."]), "nvim");
+        assert_eq!(name(&["claude"]), "claude");
+        assert_eq!(name(&[""]), "");
+        assert_eq!(name(&[]), "");
+    }
+
+    #[test]
+    fn interpreted_scripts_are_named_after_the_script() {
+        assert_eq!(name(&["node", "/usr/bin/gemini"]), "gemini");
+        assert_eq!(
+            name(&["node", "--no-warnings", "/usr/bin/copilot", "-p"]),
+            "copilot"
+        );
+        assert_eq!(
+            name(&["/usr/bin/python3.12", "manage.py", "runserver"]),
+            "manage"
+        );
+        assert_eq!(name(&["deno", "run", "-A", "tool.ts"]), "tool");
+        // A bare interpreter (a REPL) stays as it is.
+        assert_eq!(name(&["node"]), "node");
+        assert_eq!(name(&["python3", "-i"]), "python3");
+        // Not an interpreter, despite the prefix.
+        assert_eq!(name(&["pythonic", "x.py"]), "pythonic");
+    }
+
+    #[test]
+    fn package_entry_points_are_named_after_their_command() {
+        assert_eq!(
+            name(&[
+                "node",
+                "/usr/lib/node_modules/@google/gemini-cli/dist/index.js"
+            ]),
+            "gemini"
+        );
+        assert_eq!(
+            name(&[
+                "bun",
+                "/home/u/.bun/install/global/node_modules/opencode-ai/bin/opencode"
+            ]),
+            "opencode"
+        );
     }
 }

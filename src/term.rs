@@ -448,8 +448,9 @@ pub fn apply_style(term: &vte::Terminal) {
 /// COLORTERM/VTE_VERSION, and TERM only if missing), so the parent env is
 /// passed explicitly anyway to not depend on that merge. TERM is forced to
 /// describe vte itself, not whatever terminal vmux was launched from (same
-/// for the TERM_PROGRAM identity); TMUX vars are scrubbed from the process
-/// env in main() since envv filtering cannot unset what the merge re-adds.
+/// for the TERM_PROGRAM identity); TMUX and agent-session vars are scrubbed
+/// from the process env in main() since envv filtering cannot unset what the
+/// merge re-adds.
 ///
 /// The command is wrapped in vmux-relay, the PTY shim that watches for
 /// notification OSCs; without it the shell still works, just without

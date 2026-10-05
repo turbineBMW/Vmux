@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use vte4 as vte;
 use vte4::prelude::*;
 
-pub use vmux::agents::{Activity, Detected, Rollup, Status, rollup, sort_by_attention};
+pub use vmux::agents::{Activity, Detected, Rollup, ScreenUse, Status, rollup, sort_by_attention};
 
 /// How long a terminal must stay non-working before its agent counts as
 /// stopped. Agents drop the spinner for an instant between tool calls;
@@ -47,8 +47,8 @@ struct TermAgent {
     seen: Cell<bool>,
     /// [`next_seq`] at the last committed change, for recency ordering.
     changed: Cell<u64>,
-    /// The agent in front reads its state from the screen too.
-    reads_screen: Cell<bool>,
+    /// When the agent in front needs its screen re-read as output changes.
+    screen_use: Cell<ScreenUse>,
     settle: RefCell<Option<glib::SourceId>>,
     /// A throttled screen re-read is scheduled.
     screen_pending: Cell<bool>,
@@ -66,7 +66,7 @@ fn tracked(term: &vte::Terminal) -> &TermAgent {
                     current: Cell::new(None),
                     seen: Cell::new(true),
                     changed: Cell::new(0),
-                    reads_screen: Cell::new(false),
+                    screen_use: Cell::new(ScreenUse::Never),
                     settle: RefCell::new(None),
                     screen_pending: Cell::new(false),
                 },
@@ -132,8 +132,8 @@ fn detect(term: &vte::Terminal) -> Option<Detected> {
         .map(|t| t.to_string())
         .unwrap_or_default();
     tracked(term)
-        .reads_screen
-        .set(vmux::agents::reads_screen(&command));
+        .screen_use
+        .set(vmux::agents::screen_use(&command));
     let d = vmux::agents::detect_with_screen(&command, &title, || {
         let screen = live_screen(term);
         if std::env::var_os("VMUX_DEBUG_AGENTS").is_some() {
@@ -233,11 +233,33 @@ fn commit(app: &Rc<App>, zone: &Rc<Zone>, term: &vte::Terminal, now: Option<Dete
                 || (a == Activity::NeedsInput && prev != Some(a)) =>
         {
             st.seen.set(in_view(app, term));
+            if !st.seen.get()
+                && let Some(d) = now
+            {
+                notify(app, zone, term, d.agent, Status::of(a, false));
+            }
         }
         Some(_) => {}
     }
     apply_tab(term);
     zone_changed(app, zone);
+}
+
+/// An agent the user can't see started waiting on them or finished: raise a
+/// desktop notification if they asked for those. It goes through the same
+/// path as a notification escape from the terminal, so it names the zone,
+/// takes the zone's one notification slot and clicking it opens the zone.
+fn notify(app: &Rc<App>, zone: &Rc<Zone>, term: &vte::Terminal, agent: &str, status: Status) {
+    if !app.config.borrow().agent_notifications {
+        return;
+    }
+    #[allow(deprecated)] // window_title: see pane::new_tab
+    let title = term
+        .window_title()
+        .map(|t| t.to_string())
+        .unwrap_or_default();
+    let task = vmux::agents::task_title(&title);
+    app.on_notify(zone, Some(term), &describe(agent, status), task);
 }
 
 /// Re-roll the zone's summary from its terminals and push it everywhere.
@@ -256,15 +278,20 @@ pub fn refresh(app: &Rc<App>, zone: &Rc<Zone>) {
     zone_changed(app, zone);
 }
 
-/// Output changed in `term`: if an idle agent there reads its state from the
+/// Output changed in `term`: if the agent there reads its state from the
 /// screen, re-read it soon. Cheap when there's nothing to do — this runs on
 /// every screen update of every terminal.
 pub fn contents_changed(app: &Rc<App>, zone: &std::rc::Weak<Zone>, term: &vte::Terminal) {
     let Some(st) = tracked_if_any(term) else {
         return;
     };
-    // A working agent is followed through its title; no agent, nothing to read.
-    if !st.reads_screen.get() || st.current.get().is_none() || is_working(st.current.get()) {
+    let wanted = match st.screen_use.get() {
+        ScreenUse::Never => false,
+        // A working turn is followed through the title.
+        ScreenUse::WhileIdle => !is_working(st.current.get()),
+        ScreenUse::Always => true,
+    };
+    if !wanted || st.current.get().is_none() {
         return;
     }
     if st.screen_pending.replace(true) {
