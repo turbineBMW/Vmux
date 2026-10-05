@@ -48,6 +48,9 @@ pub struct App {
     /// Panes whose last tab was torn off by a drag; resolved by
     /// [`Self::sweep_drag_emptied`] once the drag concludes.
     drag_emptied: RefCell<Vec<PendingCollapse>>,
+    /// Agent sessions already reopened by this restore, so one session saved
+    /// in two tabs is only resumed once.
+    resumed_sessions: RefCell<std::collections::HashSet<String>>,
 }
 
 /// A pane emptied by a tab drag tear-off. It must stay alive as a drop target
@@ -87,6 +90,7 @@ pub fn build(gtk_app: &adw::Application) {
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
         drag_emptied: RefCell::new(Vec::new()),
+        resumed_sessions: RefCell::default(),
     });
     window::wire_chrome(&app, &chrome);
     app.agent_panel.wire(&app);
@@ -119,6 +123,12 @@ pub fn build(gtk_app: &adw::Application) {
     app.watch_text_bindings();
     app.watch_user_css();
     app.watch_omarchy_theme();
+    if app.config.borrow().resume_agents {
+        // Re-point the hook at this install's relay, in case it moved.
+        // Already logged; the setting stays on and the hook can be fixed by
+        // toggling it in Preferences.
+        let _ = app.sync_agent_hook();
+    }
     for zs in &st.zones {
         app.append_zone(zs);
     }
@@ -720,6 +730,34 @@ impl App {
         if self.config.borrow().agent_sort_to_top {
             self.move_zone_to_top(zone);
         }
+    }
+
+    /// Reopen a restored tab's agent session, if resuming is on and this
+    /// restore hasn't already reopened that session in another tab.
+    pub fn resume_agent(&self, term: &vte::Terminal, session: &vmux::agent_session::AgentSession) {
+        if !self.config.borrow().resume_agents {
+            return;
+        }
+        if self
+            .resumed_sessions
+            .borrow_mut()
+            .insert(session.id.clone())
+        {
+            agent::resume(term, session);
+        }
+    }
+
+    /// Install or remove the Claude Code session hook to match the
+    /// resume-agents setting.
+    pub fn sync_agent_hook(&self) -> Result<(), String> {
+        let relay = if self.config.borrow().resume_agents {
+            Some(term::relay_path().ok_or("vmux-relay not found")?)
+        } else {
+            None
+        };
+        vmux::agent_session::set_claude_hook(relay.as_deref()).inspect_err(|e| {
+            eprintln!("vmux: agent session hook: {e}");
+        })
     }
 
     /// Switch to the zone holding `term`, select its tab and focus it.

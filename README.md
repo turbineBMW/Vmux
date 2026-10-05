@@ -44,7 +44,10 @@ the split. Tabs can be dragged between panes.
   zones lists every running agent from every zone, most urgent first, and
   clicking one jumps to its tab (as does Ctrl+Alt+A, "Go to Agent Needing
   Attention"). Desktop notifications for agents that need you can be turned
-  on in Preferences, for agents that don't send their own.
+  on in Preferences, for agents that don't send their own. With **Resume
+  agents after restart** on, each tab's Claude Code conversation reopens
+  where it was when Vmux starts again (Vmux adds a session hook to
+  `~/.claude/settings.json` for this, and removes it when you turn it off).
 - **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
   inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
   image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).

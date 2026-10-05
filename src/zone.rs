@@ -224,7 +224,10 @@ fn restore_node(app: &Rc<App>, zone: &Rc<Zone>, node: &state::NodeState) -> gtk:
         state::NodeState::Pane { tabs, active_tab } => {
             let p = pane::build_pane(app, &Rc::downgrade(zone));
             for tab in tabs {
-                pane::new_tab(app, zone, &p, Some(tab.cwd.clone()));
+                let term = pane::new_tab(app, zone, &p, Some(tab.cwd.clone()));
+                if let (Some(term), Some(session)) = (term, &tab.agent) {
+                    app.resume_agent(&term, session);
+                }
             }
             if tabs.is_empty() {
                 p.set_visible_child_name("empty");
@@ -286,15 +289,18 @@ fn snapshot_node(w: &gtk::Widget, fallback_cwd: &str) -> state::NodeState {
         let mut tabs = Vec::new();
         for i in 0..view.n_pages() {
             let page = view.nth_page(i);
-            let cwd = splits::first_terminal_in(&page.child())
-                .and_then(|t| crate::term::cwd_of(&t))
+            let term = splits::first_terminal_in(&page.child());
+            let cwd = term
+                .as_ref()
+                .and_then(crate::term::cwd_of)
                 .or_else(|| {
                     page.keyword()
                         .filter(|k| !k.is_empty())
                         .map(|k| k.to_string())
                 })
                 .unwrap_or_else(|| fallback_cwd.to_string());
-            tabs.push(state::TabState { cwd });
+            let agent = term.as_ref().and_then(crate::agent::session_of);
+            tabs.push(state::TabState { cwd, agent });
         }
         let active_tab = view
             .selected_page()

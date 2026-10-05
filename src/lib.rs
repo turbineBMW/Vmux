@@ -1,9 +1,11 @@
 //! Library half of the vmux package: the core shared by the `vmux` desktop
 //! app, the `vmux-relay` PTY shim and other front-ends (the omarchy-mobile
 //! phone app): zones and tabs state, building terminals, the OSC relay
-//! protocol, remote-host labels, desktop notifications, git status and the
+//! protocol, remote-host labels, coding-agent detection and session resume,
+//! desktop notifications, git status and the
 //! Omarchy theme. Nothing here depends on how a front-end lays out its window.
 
+pub mod agent_session;
 pub mod agents;
 pub mod git;
 pub mod notify;

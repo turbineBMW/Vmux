@@ -41,6 +41,12 @@ pub fn main() -> ! {
         .skip(1)
         .map(|a| CString::new(a.into_vec()).unwrap_or_default())
         .collect();
+    // `vmux-relay --agent-hook <agent>` is the agent's session hook, not a
+    // relay; see agent_session.
+    if args.len() == 2 && args[0].as_bytes() == crate::agent_session::HOOK_FLAG.as_bytes() {
+        let agent = args[1].to_string_lossy();
+        std::process::exit(crate::agent_session::hook_main(&agent));
+    }
     if args.is_empty() || args.iter().any(|a| a.is_empty()) {
         eprintln!("usage: vmux-relay <command> [args...]");
         std::process::exit(127);
