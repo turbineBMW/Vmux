@@ -1,4 +1,5 @@
 mod agent;
+mod agent_panel;
 mod app;
 mod appearance;
 mod keybinds;
@@ -46,10 +47,23 @@ const CSS: &str = "
     border: 2px solid var(--sidebar-bg-color);
     margin: -2px;
 }
+.agent-dot.done {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 2px var(--vmux-agent-attention-color);
+}
 .agent-chip { border-radius: 9999px; }
 .agent-chip.agent-attention {
     box-shadow: 0 0 0 2px var(--sidebar-bg-color), 0 0 0 4px var(--vmux-agent-attention-color);
 }
+/* The sidebar's Agents section (agent_panel.rs): a header that folds it,
+   then one row per running agent with its state dot, name, zone and task. */
+.agent-panel { border-top: 1px solid var(--sidebar-border-color); }
+.agent-panel-header { margin: 4px 6px; font-weight: bold; }
+.agent-panel-header .agent-count { opacity: 0.55; font-weight: normal; }
+.agent-row { padding: 4px 8px; }
+.agent-row .agent-name { font-weight: bold; }
+.agent-row .agent-zone,
+.agent-row .agent-task { font-size: 0.85em; opacity: 0.7; }
 .zone-path { font-size: 0.85em; }
 /* Secondary line: dim the directory name and the clean marker; color each
    git-status token. Override any of these in ~/.config/vmux/style.css. */

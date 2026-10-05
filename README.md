@@ -36,6 +36,13 @@ the split. Tabs can be dragged between panes.
   real desktop notification naming the zone, even when it's hidden. Clicking
   the notification switches to that zone. A bell in a hidden zone shows an
   attention dot in the sidebar and can optionally notify too.
+- **Coding agents** — Claude Code and Codex are recognized in any tab. The
+  tab shows a spinner while the agent works, and a mark when it is waiting
+  for your approval or answer, or finished while you were looking elsewhere;
+  the zone's picture rings until you look. An **Agents** section under the
+  zones lists every running agent from every zone, most urgent first, and
+  clicking one jumps to its tab (as does Ctrl+Alt+A, "Go to Agent Needing
+  Attention").
 - **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
   inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
   image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).

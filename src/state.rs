@@ -32,6 +32,13 @@ pub struct Config {
     /// Move a zone to the top of the sidebar when a coding agent (Claude
     /// Code, Codex) starts working in it.
     pub agent_sort_to_top: bool,
+    /// Show the sidebar's Agents section: every running coding agent, from
+    /// every zone.
+    pub agent_panel: bool,
+    /// How the Agents section orders its rows.
+    pub agent_panel_order: AgentOrder,
+    /// The Agents section is folded down to its header.
+    pub agent_panel_collapsed: bool,
     /// Recolor vmux from the active Omarchy theme, live as it changes. The
     /// palette is layered over style.css rather than written into it, so
     /// turning this off restores the user's own colors untouched.
@@ -53,6 +60,9 @@ impl Default for Config {
             notify_on_bell: false,
             notification_sound: Sound::default(),
             agent_sort_to_top: true,
+            agent_panel: true,
+            agent_panel_order: AgentOrder::default(),
+            agent_panel_collapsed: false,
             follow_omarchy_theme: false,
             keybindings: BTreeMap::new(),
         }
@@ -73,6 +83,18 @@ pub enum Sound {
     File(PathBuf),
     /// `suppress-sound = true`.
     None,
+}
+
+/// How the sidebar's Agents section orders its rows.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentOrder {
+    /// Most urgent first: waiting on you, finished unseen, working, idle;
+    /// the most recent change first within each.
+    #[default]
+    Attention,
+    /// Sidebar zone order, then layout order within a zone.
+    Zones,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -247,6 +269,8 @@ mod tests {
         assert!(!cfg.notify_on_bell);
         assert_eq!(cfg.notification_sound, Sound::SystemDefault);
         assert!(cfg.agent_sort_to_top);
+        assert!(cfg.agent_panel);
+        assert_eq!(cfg.agent_panel_order, AgentOrder::Attention);
         // Match the serialized key, not the bare word: a current field may
         // legitimately contain it (follow_omarchy_theme).
         let json = serde_json::to_string(&cfg).unwrap();

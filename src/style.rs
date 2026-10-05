@@ -167,6 +167,8 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
  *   .agent-dot   - the coding-agent badge on the chip (.working / .attention),
  *                  colored by --vmux-agent-color / --vmux-agent-attention-color
  *   .agent-chip.agent-attention - the ring around a chip whose agent stopped
+ *   .agent-panel - the sidebar's Agents section (.agent-panel-header, .agent-row
+ *                  with .agent-name / .agent-zone / .agent-task; .agent-dot.done)
  *   tabbar tab   - pane tab labels, e.g.  tabbar tab { font-weight: bold; }
  *
  * Root and remote classes can be restyled beyond their mapped indicator color:
