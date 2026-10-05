@@ -314,10 +314,14 @@ pub fn set_sidebar_reveal_visible(pane: &gtk::Widget, visible: bool) {
     }
 }
 
-pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<String>) {
-    let Some(view) = tab_view_of(pane.upcast_ref()) else {
-        return;
-    };
+/// Open a tab in `pane` running a new shell; returns its terminal.
+pub fn new_tab(
+    app: &Rc<App>,
+    zone: &Rc<Zone>,
+    pane: &gtk::Stack,
+    cwd: Option<String>,
+) -> Option<vte::Terminal> {
+    let view = tab_view_of(pane.upcast_ref())?;
     let cwd = cwd
         .filter(|c| std::path::Path::new(c).is_dir())
         .unwrap_or_else(|| zone.cwd.clone());
@@ -326,7 +330,8 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
     page.set_keyword(&cwd);
     page.set_title(&state::display_name(&cwd));
 
-    if let Some(t) = splits::first_terminal_in(leaf.upcast_ref()) {
+    let terminal = splits::first_terminal_in(leaf.upcast_ref());
+    if let Some(t) = &terminal {
         // vte 0.78 deprecates the title/cwd accessors in favor of termprops;
         // the old signals still work, so migrating them is its own change.
         #[allow(deprecated)]
@@ -394,6 +399,24 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
             );
         }
         {
+            // An agent's session hook reporting its session id. Ephemeral:
+            // copy the value out, act outside vte's handler.
+            let app = app.clone();
+            t.connect_termprop_changed(
+                Some(vmux::agent_session::SESSION_TERMPROP_NAME),
+                move |term, _| {
+                    let data = term.termprop_data(vmux::agent_session::SESSION_TERMPROP_NAME);
+                    let app = app.clone();
+                    let tw = term.downgrade();
+                    glib::idle_add_local_once(move || {
+                        if let Some(term) = tw.upgrade() {
+                            agent::session_reported(&app, &term, &data);
+                        }
+                    });
+                },
+            );
+        }
+        {
             // Agents whose approval dialogs only show on screen.
             let app = app.clone();
             let zw = Rc::downgrade(zone);
@@ -410,10 +433,11 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                 }
             });
         }
-        term::focus_later(&t);
+        term::focus_later(t);
     }
     view.set_selected_page(&page);
     app.schedule_save();
+    terminal
 }
 
 /// The tab view holding `terminal`, and its page there.

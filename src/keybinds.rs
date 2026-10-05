@@ -278,6 +278,32 @@ pub fn show_settings(app: &Rc<App>) {
         });
     }
     agent_group.add(&notify_row);
+    let resume_row = adw::SwitchRow::builder()
+        .title("Resume agents after restart")
+        .subtitle("Reopen each tab's Claude Code conversation. Adds a session hook to ~/.claude/settings.json")
+        .active(app.config.borrow().resume_agents)
+        .build();
+    {
+        let app = app.clone();
+        let dialog = dialog.clone();
+        resume_row.connect_active_notify(move |row| {
+            if app.config.borrow().resume_agents == row.is_active() {
+                return; // the revert below
+            }
+            app.config.borrow_mut().resume_agents = row.is_active();
+            if let Err(e) = app.sync_agent_hook() {
+                // Leave the setting as it really is.
+                app.config.borrow_mut().resume_agents = !row.is_active();
+                row.set_active(!row.is_active());
+                let alert =
+                    adw::AlertDialog::new(Some("Couldn't update Claude Code's settings"), Some(&e));
+                alert.add_response("ok", "OK");
+                alert.present(Some(&dialog));
+            }
+            app.schedule_save();
+        });
+    }
+    agent_group.add(&resume_row);
     agent_group.add(&panel_row);
     agent_group.add(&order_row);
     general.add(&agent_group);

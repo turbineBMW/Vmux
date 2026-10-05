@@ -37,6 +37,7 @@ fn workspace_switch_restores_input_focus() {
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
         drag_emptied: RefCell::new(Vec::new()),
+        resumed_sessions: RefCell::default(),
     });
     // Only wire selection: no settings, shell processes, or persistence hooks.
     let weak = Rc::downgrade(&app);

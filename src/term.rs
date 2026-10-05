@@ -56,6 +56,15 @@ pub fn install_fgproc_termprop() {
     install_termprop(crate::remote::REMOTE_TERMPROP_NAME, 0);
 }
 
+/// Register the termprop agent session hooks report over (see
+/// [`crate::agent_session`]). Ephemeral, like the notify prop.
+pub fn install_session_termprop() {
+    install_termprop(
+        crate::agent_session::SESSION_TERMPROP_NAME,
+        vte::ffi::VTE_PROPERTY_FLAG_EPHEMERAL,
+    );
+}
+
 fn install_termprop(name: &str, flags: u32) {
     let cname = std::ffi::CString::new(name).unwrap();
     let id = unsafe {
@@ -529,7 +538,7 @@ fn spawn_with_env(
 
 /// The vmux-relay binary: next to the vmux executable (cargo target dir or
 /// install prefix), else on PATH.
-fn relay_path() -> Option<String> {
+pub fn relay_path() -> Option<String> {
     let sibling = std::env::current_exe()
         .ok()
         .map(|p| p.with_file_name("vmux-relay"));

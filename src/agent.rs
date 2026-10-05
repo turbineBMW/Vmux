@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use vte4 as vte;
 use vte4::prelude::*;
 
+use vmux::agent_session::AgentSession;
 pub use vmux::agents::{Activity, Detected, Rollup, ScreenUse, Status, rollup, sort_by_attention};
 
 /// How long a terminal must stay non-working before its agent counts as
@@ -52,6 +53,9 @@ struct TermAgent {
     settle: RefCell<Option<glib::SourceId>>,
     /// A throttled screen re-read is scheduled.
     screen_pending: Cell<bool>,
+    /// The agent's session as its hook reported it (or as restored), saved
+    /// with the tab so a restart can reopen it.
+    session: RefCell<Option<AgentSession>>,
 }
 
 fn tracked(term: &vte::Terminal) -> &TermAgent {
@@ -69,6 +73,7 @@ fn tracked(term: &vte::Terminal) -> &TermAgent {
                     screen_use: Cell::new(ScreenUse::Never),
                     settle: RefCell::new(None),
                     screen_pending: Cell::new(false),
+                    session: RefCell::new(None),
                 },
             );
         }
@@ -223,6 +228,11 @@ pub fn refresh_terminal(app: &Rc<App>, zone: &Rc<Zone>, term: &vte::Terminal) {
 
 fn commit(app: &Rc<App>, zone: &Rc<Zone>, term: &vte::Terminal, now: Option<Detected>) {
     let st = tracked(term);
+    // The agent left (back to the shell): its session is done with, so a
+    // restart doesn't reopen a conversation the user closed.
+    if now.is_none() && st.session.borrow_mut().take().is_some() {
+        app.schedule_save();
+    }
     let prev = st.current.replace(now).map(|d| d.activity);
     st.changed.set(next_seq());
     match now.map(|d| d.activity) {
@@ -309,6 +319,59 @@ pub fn contents_changed(app: &Rc<App>, zone: &std::rc::Weak<Zone>, term: &vte::T
             refresh_terminal(&app, &zone, &term);
         }
     });
+}
+
+/// The agent's session hook reported in `term` (the payload, already copied
+/// out of vte's handler). Taken only while that agent is in front: anything
+/// printed to the terminal could carry the same escape.
+pub fn session_reported(app: &Rc<App>, term: &vte::Terminal, data: &[u8]) {
+    let Some(session) = vmux::agent_session::parse_payload(data) else {
+        return;
+    };
+    if pane::fg_command(term).as_deref() != session.command() {
+        return;
+    }
+    let st = tracked(term);
+    if st.session.borrow().as_ref() != Some(&session) {
+        *st.session.borrow_mut() = Some(session);
+        app.schedule_save();
+    }
+}
+
+/// The session to save with `term`'s tab, if any.
+pub fn session_of(term: &vte::Terminal) -> Option<AgentSession> {
+    tracked_if_any(term)?.session.borrow().clone()
+}
+
+/// Reopen `session` in `term`, a freshly restored tab: once the relay reports
+/// in (the shell is running), type the agent's resume command into it. The
+/// session is kept meanwhile, so saving before the agent is back loses
+/// nothing.
+pub fn resume(term: &vte::Terminal, session: &AgentSession) {
+    let Some(command) = session.resume_command() else {
+        return;
+    };
+    *tracked(term).session.borrow_mut() = Some(session.clone());
+    let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+    let h = handler.clone();
+    let line = format!("{command}\r");
+    let id = term.connect_termprop_changed(
+        Some(vmux::osc_scan::FGPROC_TERMPROP_NAME),
+        move |term, _| {
+            if let Some(id) = h.borrow_mut().take() {
+                term.disconnect(id);
+                // Not from inside vte's termprop handler.
+                let tw = term.downgrade();
+                let line = line.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(term) = tw.upgrade() {
+                        term.feed_child(line.as_bytes());
+                    }
+                });
+            }
+        },
+    );
+    *handler.borrow_mut() = Some(id);
 }
 
 /// The user may now be looking at `term` (it was mapped, or the window was
