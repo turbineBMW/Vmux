@@ -19,6 +19,7 @@ fn workspace_switch_restores_input_focus() {
         split_view: chrome.split_view.clone(),
         stack: chrome.stack.clone(),
         listbox: chrome.listbox.clone(),
+        agent_panel: chrome.agent_panel.clone(),
         titlebar: chrome.titlebar.clone(),
         sidebar_hide_btn: chrome.sidebar_hide_btn.clone(),
         zones: RefCell::new(Vec::new()),

@@ -21,9 +21,7 @@ struct Candidate {
     name: String,
     /// Secondary line: the zone's git summary or directory basename.
     detail: String,
-    agent: Option<crate::agent::Detected>,
-    /// The agent stopped or asked for input while the zone was out of view.
-    agent_unseen: bool,
+    agent: crate::agent::Rollup,
 }
 
 /// Case-insensitive substring filter over zone names, preserving sidebar
@@ -49,8 +47,7 @@ pub fn present_zone_switcher(app: &Rc<App>) {
                 zone_id: z.id,
                 name: z.name.borrow().clone(),
                 detail: z.git_text.borrow().clone(),
-                agent: z.agent.current.get(),
-                agent_unseen: z.agent.unseen.get(),
+                agent: z.agent.rollup.get(),
             })
             .collect(),
     );
@@ -240,10 +237,10 @@ fn rebuild_list(
         dot.add_css_class("agent-dot");
         dot.set_valign(gtk::Align::Center);
         crate::agent::style_badge(&dot, c.agent);
-        if c.agent_unseen {
+        if crate::agent::wants_attention(c.agent) {
             dot.add_css_class("attention");
         }
-        dot.set_visible(c.agent.is_some());
+        dot.set_visible(c.agent.top.is_some());
         let row_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(10)

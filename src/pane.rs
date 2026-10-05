@@ -339,7 +339,7 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                     refresh_title(term, &page);
                 }
                 if let Some(zone) = zw.upgrade() {
-                    agent::refresh(&app, &zone);
+                    agent::refresh_terminal(&app, &zone, term);
                 }
             });
         }
@@ -388,10 +388,27 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
                         refresh_tab_indicators(&pane);
                     }
                     if let Some(zone) = zw.upgrade() {
-                        agent::refresh(&app, &zone);
+                        agent::refresh_terminal(&app, &zone, term);
                     }
                 },
             );
+        }
+        {
+            // Agents whose approval dialogs only show on screen.
+            let app = app.clone();
+            let zw = Rc::downgrade(zone);
+            t.connect_contents_changed(move |term| agent::contents_changed(&app, &zw, term));
+        }
+        {
+            // Mapped = its tab is showing in the visible zone: a finished
+            // agent there has now been seen.
+            let app = app.clone();
+            let zw = Rc::downgrade(zone);
+            t.connect_map(move |term| {
+                if let Some(zone) = zw.upgrade() {
+                    agent::mark_seen(&app, &zone, term);
+                }
+            });
         }
         term::focus_later(&t);
     }
@@ -399,24 +416,33 @@ pub fn new_tab(app: &Rc<App>, zone: &Rc<Zone>, pane: &gtk::Stack, cwd: Option<St
     app.schedule_save();
 }
 
+/// The tab view holding `terminal`, and its page there.
+fn view_and_page_of(terminal: &vte::Terminal) -> Option<(adw::TabView, adw::TabPage)> {
+    let leaf = terminal.parent()?;
+    let view = tab_view_of(&splits::pane_of(&leaf)?)?;
+    let page = (0..view.n_pages())
+        .map(|i| view.nth_page(i))
+        .find(|page| page.child() == leaf)?;
+    Some((view, page))
+}
+
+/// The tab page `terminal` is shown on.
+pub fn page_of(terminal: &vte::Terminal) -> Option<adw::TabPage> {
+    view_and_page_of(terminal).map(|(_, page)| page)
+}
+
+/// Make `terminal`'s tab the selected one in its pane.
+pub fn select_tab_of(terminal: &vte::Terminal) {
+    if let Some((view, page)) = view_and_page_of(terminal) {
+        view.set_selected_page(&page);
+    }
+}
+
 /// Close the tab that contains `terminal` (the pane collapses automatically
 /// when its last tab goes, via page-detached).
 pub fn close_tab_of(terminal: &vte::Terminal) {
-    let Some(leaf) = terminal.parent() else {
-        return;
-    };
-    let Some(pane) = splits::pane_of(&leaf) else {
-        return;
-    };
-    let Some(view) = tab_view_of(&pane) else {
-        return;
-    };
-    for i in 0..view.n_pages() {
-        let page = view.nth_page(i);
-        if page.child() == leaf {
-            view.close_page(&page);
-            return;
-        }
+    if let Some((view, page)) = view_and_page_of(terminal) {
+        view.close_page(&page);
     }
 }
 

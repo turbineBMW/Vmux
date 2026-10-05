@@ -18,6 +18,8 @@ pub struct App {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    /// The sidebar's Agents section.
+    pub agent_panel: Rc<crate::agent_panel::AgentPanel>,
     pub titlebar: adw::HeaderBar,
     pub sidebar_hide_btn: gtk::Button,
     pub zones: RefCell<Vec<Rc<Zone>>>,
@@ -68,6 +70,7 @@ pub fn build(gtk_app: &adw::Application) {
         stack: chrome.stack.clone(),
         notifier: crate::notify::Notifier::new(),
         listbox: chrome.listbox.clone(),
+        agent_panel: chrome.agent_panel.clone(),
         titlebar: chrome.titlebar.clone(),
         sidebar_hide_btn: chrome.sidebar_hide_btn.clone(),
         zones: RefCell::new(Vec::new()),
@@ -86,6 +89,7 @@ pub fn build(gtk_app: &adw::Application) {
         drag_emptied: RefCell::new(Vec::new()),
     });
     window::wire_chrome(&app, &chrome);
+    app.agent_panel.wire(&app);
     // Notification clicks land here: switch to the originating zone and
     // present the window. On Wayland a compositor only grants focus to a
     // window holding a fresh xdg-activation token, which the notification
@@ -166,6 +170,12 @@ impl App {
             "last-zone" => self.select_last_zone(),
             "switch-zone" => {
                 crate::zone_switcher::present_zone_switcher(self);
+                glib::Propagation::Stop
+            }
+            "next-agent" => self.goto_agent_needing_attention(),
+            "focus-agents" => {
+                self.split_view.set_show_sidebar(true);
+                self.agent_panel.focus(self);
                 glib::Propagation::Stop
             }
             "move-zone-up" => self.move_zone(-1),
@@ -407,10 +417,12 @@ impl App {
     }
 
     /// Refresh every row's position chip after the sidebar order changes.
-    fn renumber_zones(&self) {
+    fn renumber_zones(self: &Rc<Self>) {
         for (i, zone) in self.zones.borrow().iter().enumerate() {
             zone.number_label.set_label(&(i + 1).to_string());
         }
+        // The Agents section can be in zone order.
+        self.agent_panel.schedule_refresh(self);
     }
 
     pub fn add_zone(self: &Rc<Self>, name: &str, cwd: &str) {
@@ -448,6 +460,7 @@ impl App {
         *zone.name.borrow_mut() = name.to_string();
         zone.name_label.set_label(name);
         zone.avatar.set_text(Some(name));
+        self.agent_panel.schedule_refresh(self);
         self.schedule_save();
     }
 
@@ -561,7 +574,7 @@ impl App {
         }
         self.stack.set_visible_child_name(&zone.stack_name());
         zone.attention.set_visible(false);
-        agent::mark_seen(&zone);
+        agent::mark_visible_seen(self, &zone);
         self.withdraw_zone_notification(&zone);
         if let Some(t) = target {
             term::focus_later(&t);
@@ -701,24 +714,46 @@ impl App {
 
     // ----- coding agents ----------------------------------------------------
 
-    /// Whether the user can be assumed to see `zone` right now: it is the
-    /// visible page and the window is active. The same rule gates the
-    /// attention dot and desktop notifications.
-    pub fn zone_in_view(&self, zone: &Zone) -> bool {
-        let visible = self
-            .stack
-            .visible_child_name()
-            .map(|n| n == zone.stack_name())
-            .unwrap_or(false);
-        visible && self.window.is_active()
-    }
-
     /// A zone's agent went from not-working to working: optionally float
     /// the zone to the top of the sidebar.
     pub fn on_agent_started(self: &Rc<Self>, zone: &Rc<Zone>) {
         if self.config.borrow().agent_sort_to_top {
             self.move_zone_to_top(zone);
         }
+    }
+
+    /// Switch to the zone holding `term`, select its tab and focus it.
+    pub fn reveal_terminal(self: &Rc<Self>, term: &vte::Terminal) {
+        let idx = self
+            .zones
+            .borrow()
+            .iter()
+            .position(|z| term.is_ancestor(&z.page));
+        let Some(idx) = idx else { return };
+        let zone = self.zones.borrow()[idx].clone();
+        pane::select_tab_of(term);
+        // on_zone_selected focuses the remembered pane's selected tab, which
+        // is now this terminal's.
+        zone.last_focused.set(Some(term));
+        self.select_zone(idx);
+    }
+
+    /// Jump to the agent most in need of the user — waiting on input, else
+    /// finished unseen; the most recent first — skipping the one already
+    /// focused, so repeated presses walk through them.
+    fn goto_agent_needing_attention(self: &Rc<Self>) -> glib::Propagation {
+        let mut items = crate::agent_panel::entries(self);
+        agent::sort_by_attention(&mut items, |(_, e)| (e.status, e.changed));
+        let focused = self.focused_terminal();
+        let target = items
+            .into_iter()
+            .map(|(_, e)| e)
+            .filter(|e| e.status.wants_attention())
+            .find(|e| focused.as_ref() != Some(&e.term));
+        if let Some(e) = target {
+            self.reveal_terminal(&e.term);
+        }
+        glib::Propagation::Stop
     }
 
     /// Move `zone` to sidebar position 0 without ever removing the selected

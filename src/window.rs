@@ -1,3 +1,4 @@
+use crate::agent_panel::AgentPanel;
 use crate::app::App;
 use crate::state;
 use crate::zone::Zone;
@@ -12,6 +13,7 @@ pub struct Chrome {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    pub agent_panel: Rc<AgentPanel>,
     pub titlebar: adw::HeaderBar,
     pub sidebar_hide_btn: gtk::Button,
     pub new_zone_btn: gtk::Button,
@@ -56,9 +58,16 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
     menu_btn.set_menu_model(Some(&menu));
     sidebar_header.pack_end(&menu_btn);
 
+    // Zones on top, the Agents section under them at its natural height
+    // (capped; it scrolls past that), hidden while no agent is running.
+    let agent_panel = AgentPanel::new();
+    let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar_box.append(&scroll);
+    sidebar_box.append(&agent_panel.root);
+
     let sidebar = adw::ToolbarView::new();
     sidebar.add_top_bar(&sidebar_header);
-    sidebar.set_content(Some(&scroll));
+    sidebar.set_content(Some(&sidebar_box));
 
     let stack = gtk::Stack::new();
     stack.set_hexpand(true);
@@ -104,6 +113,7 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
         split_view,
         stack,
         listbox,
+        agent_panel,
         titlebar: header,
         sidebar_hide_btn,
         new_zone_btn,
@@ -206,7 +216,7 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
                 && let Some(zone) = app.active_zone()
             {
                 zone.attention.set_visible(false);
-                crate::agent::mark_seen(&zone);
+                crate::agent::mark_visible_seen(&app, &zone);
                 app.withdraw_zone_notification(&zone);
             }
         });

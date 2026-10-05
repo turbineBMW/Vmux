@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::state::Config;
+use crate::state::{AgentOrder, Config};
 use gtk4 as gtk;
 use gtk4::glib;
 use libadwaita as adw;
@@ -34,6 +34,12 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("next-zone", "Next Zone", "<Control><Alt>Page_Down"),
     ("last-zone", "Last Focused Zone", "<Control><Alt>l"),
     ("switch-zone", "Switch Zone…", "<Control><Alt>slash"),
+    (
+        "next-agent",
+        "Go to Agent Needing Attention",
+        "<Control><Alt>a",
+    ),
+    ("focus-agents", "Focus Agents List", ""),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
     (
         "move-zone-down",
@@ -207,7 +213,7 @@ pub fn show_settings(app: &Rc<App>) {
     let agent_group = adw::PreferencesGroup::new();
     agent_group.set_title("Coding agents");
     agent_group.set_description(Some(
-        "Claude Code and Codex are detected from each terminal's foreground command and title",
+        "Claude Code and Codex are detected from each terminal's foreground command, title and screen",
     ));
     let sort_row = adw::SwitchRow::builder()
         .title("Move working workspaces to the top")
@@ -222,6 +228,45 @@ pub fn show_settings(app: &Rc<App>) {
         });
     }
     agent_group.add(&sort_row);
+    let panel_row = adw::SwitchRow::builder()
+        .title("Show running agents")
+        .subtitle("List every agent, from every workspace, under the workspaces in the sidebar")
+        .active(app.config.borrow().agent_panel)
+        .build();
+    let order_row = adw::ComboRow::builder()
+        .title("Order agents by")
+        .model(&gtk::StringList::new(&["Attention", "Workspace"]))
+        .selected(match app.config.borrow().agent_panel_order {
+            AgentOrder::Attention => 0,
+            AgentOrder::Zones => 1,
+        })
+        .sensitive(app.config.borrow().agent_panel)
+        .build();
+    order_row.set_subtitle("Attention puts agents waiting on you first, then finished ones");
+    {
+        let app = app.clone();
+        let order_row = order_row.clone();
+        panel_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().agent_panel = row.is_active();
+            order_row.set_sensitive(row.is_active());
+            app.schedule_save();
+            app.agent_panel.refresh(&app);
+        });
+    }
+    {
+        let app = app.clone();
+        order_row.connect_selected_notify(move |row| {
+            app.config.borrow_mut().agent_panel_order = if row.selected() == 1 {
+                AgentOrder::Zones
+            } else {
+                AgentOrder::Attention
+            };
+            app.schedule_save();
+            app.agent_panel.refresh(&app);
+        });
+    }
+    agent_group.add(&panel_row);
+    agent_group.add(&order_row);
     general.add(&agent_group);
     dialog.add(&general);
 
