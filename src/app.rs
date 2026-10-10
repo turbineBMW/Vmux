@@ -186,6 +186,10 @@ impl App {
                 glib::Propagation::Stop
             }
             "next-agent" => self.goto_agent_needing_attention(),
+            "ask-agent" => {
+                crate::ask_dialog::present(self);
+                glib::Propagation::Stop
+            }
             "focus-agents" => {
                 self.split_view.set_show_sidebar(true);
                 self.agent_panel.focus(self);
@@ -788,6 +792,66 @@ impl App {
         self.select_zone(idx);
     }
 
+    /// Hand `request` to the configured agent, started in a new terminal
+    /// next to `source` (where the user asked from), in its directory.
+    /// `screen` is that terminal's recent output, to send along.
+    pub fn ask_agent(
+        self: &Rc<Self>,
+        source: Option<&vte::Terminal>,
+        request: &str,
+        screen: Option<&str>,
+    ) {
+        use adw::prelude::*;
+        use vmux::ask::{self, AskPlacement};
+        // The asking terminal's zone and pane, else the active zone's.
+        let zone = source
+            .and_then(|t| {
+                self.zones
+                    .borrow()
+                    .iter()
+                    .find(|z| t.is_ancestor(&z.page))
+                    .cloned()
+            })
+            .or_else(|| self.active_zone());
+        let Some(zone) = zone else { return };
+        let p = source
+            .and_then(|t| splits::pane_of(t.upcast_ref()))
+            .and_then(|w| w.downcast::<gtk::Stack>().ok())
+            .or_else(|| self.focused_pane(&zone));
+        let Some(p) = p else { return };
+        let cwd = source.and_then(term::cwd_of);
+        let (agent, placement) = {
+            let cfg = self.config.borrow();
+            (cfg.ask_agent, cfg.ask_agent_opens_in)
+        };
+        let file =
+            match ask::write_prompt(&ask::prompt_dir(), &ask::compose_prompt(request, screen)) {
+                Ok(file) => file,
+                Err(e) => {
+                    let alert = adw::AlertDialog::new(
+                        Some("Couldn't hand the request over"),
+                        Some(&format!(
+                            "Writing it to {} failed: {e}",
+                            ask::prompt_dir().display()
+                        )),
+                    );
+                    alert.add_response("ok", "OK");
+                    alert.present(Some(&self.window));
+                    return;
+                }
+            };
+        let t = match placement {
+            AskPlacement::SplitRight => {
+                self.split_pane(&zone, &p, gtk::Orientation::Horizontal, cwd)
+            }
+            AskPlacement::SplitDown => self.split_pane(&zone, &p, gtk::Orientation::Vertical, cwd),
+            AskPlacement::NewTab => pane::new_tab(self, &zone, &p, cwd),
+        };
+        if let Some(t) = t {
+            agent::type_when_ready(&t, &ask::command_line(agent, &file));
+        }
+    }
+
     /// Jump to the agent most in need of the user — waiting on input, else
     /// finished unseen; the most recent first — skipping the one already
     /// focused, so repeated presses walk through them.
@@ -919,17 +983,31 @@ impl App {
             return glib::Propagation::Proceed;
         };
         let cwd = self.focused_terminal().and_then(|t| term::cwd_of(&t));
-        let new_pane = pane::build_pane(self, &Rc::downgrade(&zone));
-        pane::new_tab(self, &zone, &new_pane, cwd);
+        self.split_pane(&zone, &p, orientation, cwd);
+        glib::Propagation::Stop
+    }
+
+    /// Split `p` with a new pane holding one tab, focused; returns its
+    /// terminal.
+    fn split_pane(
+        self: &Rc<Self>,
+        zone: &Rc<Zone>,
+        p: &gtk::Stack,
+        orientation: gtk::Orientation,
+        cwd: Option<String>,
+    ) -> Option<vte::Terminal> {
+        let new_pane = pane::build_pane(self, &Rc::downgrade(zone));
+        pane::new_tab(self, zone, &new_pane, cwd);
         if let Some(paned) = splits::split_leaf(p.upcast_ref(), new_pane.upcast_ref(), orientation)
         {
             self.watch_paned(&paned);
         }
-        if let Some(t) = splits::first_terminal_in(new_pane.upcast_ref()) {
-            term::focus_later(&t);
+        let t = splits::first_terminal_in(new_pane.upcast_ref());
+        if let Some(t) = &t {
+            term::focus_later(t);
         }
         self.schedule_save();
-        glib::Propagation::Stop
+        t
     }
 
     fn focus_next_pane(self: &Rc<Self>) -> glib::Propagation {

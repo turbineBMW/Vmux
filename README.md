@@ -48,6 +48,12 @@ the split. Tabs can be dragged between panes.
   agents after restart** on, each tab's Claude Code conversation reopens
   where it was when Vmux starts again (Vmux adds a session hook to
   `~/.claude/settings.json` for this, and removes it when you turn it off).
+- **Ask Agent** — Ctrl+Alt+' opens a prompt for your own Claude Code or
+  Codex (no extra AI service: it runs the CLI you already pay for). Type what
+  you're trying to do and the agent starts in a split next to your terminal,
+  in its directory, optionally with the terminal's recent output attached so
+  "why did that fail?" has something to go on. The agent, where it opens and
+  whether the screen is sent are set in Preferences.
 - **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
   inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
   image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).

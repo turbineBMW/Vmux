@@ -40,6 +40,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
         "<Control><Alt>a",
     ),
     ("focus-agents", "Focus Agents List", ""),
+    ("ask-agent", "Ask Agent…", "<Control><Alt>apostrophe"),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
     (
         "move-zone-down",
@@ -307,6 +308,7 @@ pub fn show_settings(app: &Rc<App>) {
     agent_group.add(&panel_row);
     agent_group.add(&order_row);
     general.add(&agent_group);
+    general.add(&ask_agent_group(app));
     dialog.add(&general);
 
     dialog.add(&crate::appearance::page(app));
@@ -347,6 +349,77 @@ pub fn show_settings(app: &Rc<App>) {
     dialog.add(&keys_page);
 
     dialog.present(Some(&app.window));
+}
+
+/// Preferences for the Ask Agent popup.
+fn ask_agent_group(app: &Rc<App>) -> adw::PreferencesGroup {
+    use vmux::ask::{AskAgent, AskPlacement};
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Ask Agent");
+    group.set_description(Some(&format!(
+        "{} opens a prompt for your own Claude Code or Codex, started next to the terminal you're in, in its directory",
+        pretty_accel(&accel_for(&app.config.borrow(), "ask-agent"))
+    )));
+    let agents: Vec<&str> = AskAgent::ALL.iter().map(|a| a.label()).collect();
+    let agent_row = adw::ComboRow::builder()
+        .title("Agent")
+        .model(&gtk::StringList::new(&agents))
+        .build();
+    let current = app.config.borrow().ask_agent;
+    agent_row.set_selected(
+        AskAgent::ALL
+            .iter()
+            .position(|a| *a == current)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let app = app.clone();
+        agent_row.connect_selected_notify(move |row| {
+            if let Some(&agent) = AskAgent::ALL.get(row.selected() as usize) {
+                app.config.borrow_mut().ask_agent = agent;
+                app.schedule_save();
+            }
+        });
+    }
+    group.add(&agent_row);
+    let places: Vec<&str> = AskPlacement::ALL.iter().map(|p| p.label()).collect();
+    let place_row = adw::ComboRow::builder()
+        .title("Open in")
+        .model(&gtk::StringList::new(&places))
+        .build();
+    let current = app.config.borrow().ask_agent_opens_in;
+    place_row.set_selected(
+        AskPlacement::ALL
+            .iter()
+            .position(|p| *p == current)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let app = app.clone();
+        place_row.connect_selected_notify(move |row| {
+            if let Some(&place) = AskPlacement::ALL.get(row.selected() as usize) {
+                app.config.borrow_mut().ask_agent_opens_in = place;
+                app.schedule_save();
+            }
+        });
+    }
+    group.add(&place_row);
+    let screen_row = adw::SwitchRow::builder()
+        .title("Include what's on screen")
+        .subtitle(
+            "Send the terminal's recent output along with the request. The popup can turn it off",
+        )
+        .active(app.config.borrow().ask_agent_screen)
+        .build();
+    {
+        let app = app.clone();
+        screen_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().ask_agent_screen = row.is_active();
+            app.schedule_save();
+        });
+    }
+    group.add(&screen_row);
+    group
 }
 
 fn refresh_labels(app: &Rc<App>, labels: &Rc<RefCell<Vec<(String, gtk::ShortcutLabel)>>>) {

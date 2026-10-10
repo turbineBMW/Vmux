@@ -100,6 +100,7 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
     menu.append(Some("Hide Sidebar"), Some("win.hide-sidebar"));
     menu.append(Some("Add Workspace"), Some("win.add-workspace"));
     menu.append(Some("Switch Workspace"), Some("win.switch-workspace"));
+    menu.append(Some("Ask Agent"), Some("win.ask-agent"));
     menu.append(Some("Close Workspace"), Some("win.close-workspace"));
     menu.append(Some("Settings"), Some("win.preferences"));
     menu.append(Some("Quit"), Some("win.quit"));
@@ -240,6 +241,12 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
         let app = app.clone();
         let act = gio::SimpleAction::new("switch-workspace", None);
         act.connect_activate(move |_, _| crate::zone_switcher::present_zone_switcher(&app));
+        chrome.window.add_action(&act);
+    }
+    {
+        let app = app.clone();
+        let act = gio::SimpleAction::new("ask-agent", None);
+        act.connect_activate(move |_, _| crate::ask_dialog::present(&app));
         chrome.window.add_action(&act);
     }
     {
