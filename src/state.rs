@@ -51,6 +51,12 @@ pub struct Config {
     /// palette is layered over style.css rather than written into it, so
     /// turning this off restores the user's own colors untouched.
     pub follow_omarchy_theme: bool,
+    /// The agent the Ask Agent popup starts.
+    pub ask_agent: crate::ask::AskAgent,
+    /// Where Ask Agent opens the agent's terminal.
+    pub ask_agent_opens_in: crate::ask::AskPlacement,
+    /// Send the asking terminal's recent output along with the request.
+    pub ask_agent_screen: bool,
     /// Overrides of the default keybindings, action id -> accelerator
     /// ("" disables the binding). Defaults live in keybinds::ACTIONS.
     pub keybindings: BTreeMap<String, String>,
@@ -75,6 +81,9 @@ impl Default for Config {
             agent_panel_collapsed: false,
             zone_list_collapsed: false,
             follow_omarchy_theme: false,
+            ask_agent: Default::default(),
+            ask_agent_opens_in: Default::default(),
+            ask_agent_screen: true,
             keybindings: BTreeMap::new(),
         }
     }
@@ -286,6 +295,8 @@ mod tests {
         assert!(cfg.agent_sort_to_top);
         assert!(cfg.agent_panel);
         assert_eq!(cfg.agent_panel_order, AgentOrder::Attention);
+        assert_eq!(cfg.ask_agent, crate::ask::AskAgent::Claude);
+        assert!(cfg.ask_agent_screen);
         // Match the serialized key, not the bare word: a current field may
         // legitimately contain it (follow_omarchy_theme).
         let json = serde_json::to_string(&cfg).unwrap();

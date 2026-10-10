@@ -2,6 +2,7 @@ mod agent;
 mod agent_panel;
 mod app;
 mod appearance;
+mod ask_dialog;
 mod keybinds;
 mod leaf;
 mod open_path_dialog;

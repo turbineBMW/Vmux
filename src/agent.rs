@@ -352,6 +352,12 @@ pub fn resume(term: &vte::Terminal, session: &AgentSession) {
         return;
     };
     *tracked(term).session.borrow_mut() = Some(session.clone());
+    type_when_ready(term, &command);
+}
+
+/// Type `command` into a new terminal's shell, and run it, once the shell is
+/// up: when the relay first reports what's in front of it.
+pub fn type_when_ready(term: &vte::Terminal, command: &str) {
     let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
     let h = handler.clone();
     let line = format!("{command}\r");
