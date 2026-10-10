@@ -13,11 +13,62 @@ pub struct Chrome {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    pub zone_list: ZoneListHeader,
     pub agent_panel: Rc<AgentPanel>,
     pub titlebar: adw::HeaderBar,
     pub sidebar_hide_btn: gtk::Button,
     pub new_zone_btn: gtk::Button,
     pub settings_btn: gtk::Button,
+}
+
+/// The header over the sidebar's zone list, which folds the list away so the
+/// Agents section under it can have the whole sidebar.
+#[derive(Clone)]
+pub struct ZoneListHeader {
+    pub button: gtk::Button,
+    arrow: gtk::Image,
+    count: gtk::Label,
+    scroll: gtk::ScrolledWindow,
+}
+
+impl ZoneListHeader {
+    fn new(scroll: &gtk::ScrolledWindow) -> Self {
+        let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+        let title = gtk::Label::new(Some("Zones"));
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+        let count = gtk::Label::new(None);
+        count.add_css_class("zone-count");
+        let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header_box.append(&arrow);
+        header_box.append(&title);
+        header_box.append(&count);
+        let button = gtk::Button::new();
+        button.set_child(Some(&header_box));
+        button.add_css_class("flat");
+        button.add_css_class("zone-list-header");
+        Self {
+            button,
+            arrow,
+            count,
+            scroll: scroll.clone(),
+        }
+    }
+
+    pub fn sync(&self, zones: usize, collapsed: bool) {
+        self.count.set_label(&zones.to_string());
+        self.scroll.set_visible(!collapsed);
+        self.arrow.set_icon_name(Some(if collapsed {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        }));
+        self.button.set_tooltip_text(Some(if collapsed {
+            "Show zones"
+        } else {
+            "Hide zones"
+        }));
+    }
 }
 
 pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
@@ -60,8 +111,11 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
 
     // Zones on top, the Agents section under them at its natural height
     // (capped; it scrolls past that), hidden while no agent is running.
+    // Folding the zones hands the Agents section the rest of the sidebar.
+    let zone_list = ZoneListHeader::new(&scroll);
     let agent_panel = AgentPanel::new();
     let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar_box.append(&zone_list.button);
     sidebar_box.append(&scroll);
     sidebar_box.append(&agent_panel.root);
 
@@ -113,6 +167,7 @@ pub fn build_chrome(gtk_app: &adw::Application) -> Chrome {
         split_view,
         stack,
         listbox,
+        zone_list,
         agent_panel,
         titlebar: header,
         sidebar_hide_btn,
@@ -137,6 +192,16 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
             if let Some(row) = row {
                 app.on_zone_selected(row);
             }
+        });
+    }
+    {
+        let app = app.clone();
+        chrome.zone_list.button.connect_clicked(move |_| {
+            let collapsed = !app.config.borrow().zone_list_collapsed;
+            app.config.borrow_mut().zone_list_collapsed = collapsed;
+            app.schedule_save();
+            app.sync_zone_list();
+            app.agent_panel.refresh(&app);
         });
     }
     {

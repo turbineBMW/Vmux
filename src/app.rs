@@ -18,6 +18,8 @@ pub struct App {
     pub split_view: adw::OverlaySplitView,
     pub stack: gtk::Stack,
     pub listbox: gtk::ListBox,
+    /// The header that folds the sidebar's zone list.
+    pub zone_list: window::ZoneListHeader,
     /// The sidebar's Agents section.
     pub agent_panel: Rc<crate::agent_panel::AgentPanel>,
     pub titlebar: adw::HeaderBar,
@@ -73,6 +75,7 @@ pub fn build(gtk_app: &adw::Application) {
         stack: chrome.stack.clone(),
         notifier: crate::notify::Notifier::new(),
         listbox: chrome.listbox.clone(),
+        zone_list: chrome.zone_list.clone(),
         agent_panel: chrome.agent_panel.clone(),
         titlebar: chrome.titlebar.clone(),
         sidebar_hide_btn: chrome.sidebar_hide_btn.clone(),
@@ -431,8 +434,17 @@ impl App {
         for (i, zone) in self.zones.borrow().iter().enumerate() {
             zone.number_label.set_label(&(i + 1).to_string());
         }
+        self.sync_zone_list();
         // The Agents section can be in zone order.
         self.agent_panel.schedule_refresh(self);
+    }
+
+    /// Bring the zone list's header up to date: its count and fold state.
+    pub fn sync_zone_list(&self) {
+        self.zone_list.sync(
+            self.zones.borrow().len(),
+            self.config.borrow().zone_list_collapsed,
+        );
     }
 
     pub fn add_zone(self: &Rc<Self>, name: &str, cwd: &str) {

@@ -45,6 +45,8 @@ pub struct Config {
     pub agent_panel_order: AgentOrder,
     /// The Agents section is folded down to its header.
     pub agent_panel_collapsed: bool,
+    /// The sidebar's zone list is folded down to its header.
+    pub zone_list_collapsed: bool,
     /// Recolor vmux from the active Omarchy theme, live as it changes. The
     /// palette is layered over style.css rather than written into it, so
     /// turning this off restores the user's own colors untouched.
@@ -71,6 +73,7 @@ impl Default for Config {
             agent_panel: true,
             agent_panel_order: AgentOrder::default(),
             agent_panel_collapsed: false,
+            zone_list_collapsed: false,
             follow_omarchy_theme: false,
             keybindings: BTreeMap::new(),
         }
