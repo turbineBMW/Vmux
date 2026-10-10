@@ -21,6 +21,9 @@ pub struct OpenPathDialogInput {
 struct PathInputState {
     resolved_path: PathBuf,
     valid_directory: bool,
+    /// The path doesn't exist yet but its parent folder does, so accepting
+    /// creates it.
+    new_directory: bool,
     helper_text: String,
     error_text: Option<String>,
 }
@@ -104,7 +107,7 @@ pub fn present_open_path_dialog(input: OpenPathDialogInput) {
         .build();
     content.append(
         &gtk::Label::builder()
-            .label("Type a directory path. Arrow keys or click select a directory, / descends, Enter accepts a selection, then Enter creates the zone.")
+            .label("Type a directory path, or a new folder name to create it. Arrow keys or click select a directory, / descends, Enter accepts a selection, then Enter creates the zone.")
             .halign(gtk::Align::Start)
             .xalign(0.0)
             .wrap(true)
@@ -304,31 +307,33 @@ pub fn present_open_path_dialog(input: OpenPathDialogInput) {
         });
     }
 
-    {
+    let accept = {
         let window = window.clone();
         let entry = entry.clone();
+        let error_label = error_label.clone();
         let initial_directory = input.initial_directory.clone();
         let on_open = input.on_open.clone();
-        open_button.connect_clicked(move |_| {
-            if let Some(path) = open_directory_target(entry.text().as_str(), &initial_directory) {
-                on_open(path);
-                window.close();
-            }
-        });
-    }
+        Rc::new(
+            move || match open_directory_target(entry.text().as_str(), &initial_directory) {
+                Some(Ok(path)) => {
+                    on_open(path);
+                    window.close();
+                }
+                Some(Err(e)) => {
+                    error_label.set_text(&format!("Couldn't create the folder: {e}"));
+                    error_label.set_visible(true);
+                }
+                None => {}
+            },
+        )
+    };
 
     {
-        let window = window.clone();
-        let entry = entry.clone();
-        let initial_directory = input.initial_directory.clone();
-        let on_open = input.on_open.clone();
-        entry.connect_activate(move |entry| {
-            if let Some(path) = open_directory_target(entry.text().as_str(), &initial_directory) {
-                on_open(path);
-                window.close();
-            }
-        });
+        let accept = accept.clone();
+        open_button.connect_clicked(move |_| accept());
     }
+
+    entry.connect_activate(move |_| accept());
 
     window.present();
     entry.grab_focus();
@@ -395,7 +400,7 @@ fn sync_path_input_ui(
         },
     );
     helper_label.set_text(&state.helper_text);
-    open_button.set_sensitive(state.valid_directory);
+    open_button.set_sensitive(state.valid_directory || state.new_directory);
     if let Some(error_text) = state.error_text {
         error_label.set_text(&error_text);
         error_label.set_visible(true);
@@ -464,9 +469,16 @@ fn dismiss_suggestions_for_enter(
     dialog_state: &Rc<RefCell<OpenPathDialogState>>,
     initial_directory: &Path,
 ) -> bool {
+    // With matches showing for a name that doesn't exist yet, the first
+    // Enter only closes the list, so a half-typed name isn't created as a
+    // folder by accident.
     let should_dismiss = {
         let state = dialog_state.borrow();
-        !state.suggestions_dismissed && state.suggestion_session.selected_index.is_some()
+        let session = &state.suggestion_session;
+        !state.suggestions_dismissed
+            && (session.selected_index.is_some()
+                || (!session.suggestions.is_empty()
+                    && !resolve_input_path(entry.text().as_str(), initial_directory).exists()))
     };
     if !should_dismiss {
         return false;
@@ -616,9 +628,20 @@ fn schedule_cursor_to_end(entry: &gtk::Entry) {
     });
 }
 
-fn open_directory_target(input: &str, initial_directory: &Path) -> Option<PathBuf> {
+/// The directory to create the zone in, made first when the input names a new
+/// folder. None while the input names neither.
+fn open_directory_target(
+    input: &str,
+    initial_directory: &Path,
+) -> Option<std::io::Result<PathBuf>> {
     let state = analyze_path_input(input, initial_directory, false, false);
-    state.valid_directory.then_some(state.resolved_path)
+    if state.valid_directory {
+        Some(Ok(state.resolved_path))
+    } else if state.new_directory {
+        Some(fs::create_dir(&state.resolved_path).map(|()| state.resolved_path))
+    } else {
+        None
+    }
 }
 
 fn analyze_path_input(
@@ -629,6 +652,13 @@ fn analyze_path_input(
 ) -> PathInputState {
     let resolved_path = resolve_input_path(input, initial_directory);
     let valid_directory = resolved_path.is_dir();
+    let parent = resolved_path.parent().filter(|p| p.is_dir());
+    let new_directory = !resolved_path.exists()
+        && parent.is_some()
+        && matches!(
+            resolved_path.components().next_back(),
+            Some(std::path::Component::Normal(_))
+        );
     let helper_text = if suggestions_visible && selection_active {
         "Press Enter to accept the selected directory. Press Enter again to create the zone."
             .to_string()
@@ -637,19 +667,29 @@ fn analyze_path_input(
             "Press Enter to create a zone in {}. Type / to browse child directories.",
             resolved_path.display()
         )
+    } else if suggestions_visible && new_directory {
+        "Matching directories shown below. Arrow keys or click fills the current segment, or press Enter twice to create this as a new folder."
+            .to_string()
     } else if suggestions_visible {
         "Matching directories shown below. Arrow keys or click fills the current segment."
             .to_string()
     } else if valid_directory {
         format!("Create a zone in {}", resolved_path.display())
+    } else if new_directory {
+        format!(
+            "Press Enter to create the folder {} and a zone in it.",
+            resolved_path.display()
+        )
     } else {
         "Type a directory path".to_string()
     };
 
-    let error_text = if valid_directory {
+    let error_text = if valid_directory || new_directory {
         None
     } else if resolved_path.exists() {
         Some("Path is not a directory".to_string())
+    } else if parent.is_none() {
+        Some("Parent folder does not exist".to_string())
     } else {
         Some("Directory does not exist".to_string())
     };
@@ -657,6 +697,7 @@ fn analyze_path_input(
     PathInputState {
         resolved_path,
         valid_directory,
+        new_directory,
         helper_text,
         error_text,
     }
@@ -853,6 +894,49 @@ mod tests {
             state.helper_text,
             "Press Enter to accept the selected directory. Press Enter again to create the zone."
         );
+    }
+
+    #[test]
+    fn analyze_path_input_offers_to_create_a_new_folder_in_an_existing_one() {
+        let dir = TempDir::new().expect("temp dir");
+        let state = analyze_path_input(
+            &format!("{}/fresh", dir.path().display()),
+            dir.path(),
+            false,
+            false,
+        );
+
+        assert!(!state.valid_directory);
+        assert!(state.new_directory);
+        assert!(state.error_text.is_none());
+    }
+
+    #[test]
+    fn analyze_path_input_refuses_a_new_folder_under_a_missing_parent() {
+        let dir = TempDir::new().expect("temp dir");
+        let state = analyze_path_input(
+            &format!("{}/missing/fresh", dir.path().display()),
+            dir.path(),
+            false,
+            false,
+        );
+
+        assert!(!state.new_directory);
+        assert_eq!(
+            state.error_text.as_deref(),
+            Some("Parent folder does not exist")
+        );
+    }
+
+    #[test]
+    fn open_directory_target_creates_the_new_folder() {
+        let dir = TempDir::new().expect("temp dir");
+        let target = open_directory_target("fresh/", dir.path())
+            .expect("openable")
+            .expect("created");
+
+        assert_eq!(target, dir.path().join("fresh"));
+        assert!(target.is_dir());
     }
 
     #[test]

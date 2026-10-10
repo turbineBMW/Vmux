@@ -5,8 +5,9 @@
 //! terminal.
 //!
 //! The section sits under the zone list at the height of its rows (up to
-//! `MAX_LIST_HEIGHT`, then it scrolls), hides itself while no agent is
-//! running, and folds down to its header on a click.
+//! `MAX_LIST_HEIGHT`, then it scrolls; with the zone list folded it takes the
+//! rest of the sidebar), hides itself while no agent is running, and folds
+//! down to its header on a click.
 //! Rows follow [`crate::agent`]'s commits through [`AgentPanel::schedule_refresh`],
 //! coalesced to one rebuild per main-loop pass and done in place when the
 //! set and order of terminals is unchanged — there's no polling.
@@ -137,12 +138,13 @@ impl AgentPanel {
     }
 
     pub fn refresh(&self, app: &Rc<App>) {
-        let (show, order, collapsed) = {
+        let (show, order, collapsed, zones_collapsed) = {
             let cfg = app.config.borrow();
             (
                 cfg.agent_panel,
                 cfg.agent_panel_order,
                 cfg.agent_panel_collapsed,
+                cfg.zone_list_collapsed,
             )
         };
         let mut items = entries(app);
@@ -153,6 +155,10 @@ impl AgentPanel {
         self.root.set_visible(show && !items.is_empty());
         self.count.set_label(&items.len().to_string());
         self.scroll.set_visible(!collapsed);
+        self.root.set_vexpand(zones_collapsed && !collapsed);
+        self.scroll.set_vexpand(zones_collapsed);
+        self.scroll
+            .set_max_content_height(if zones_collapsed { -1 } else { MAX_LIST_HEIGHT });
         self.arrow.set_icon_name(Some(if collapsed {
             "pan-end-symbolic"
         } else {
@@ -261,7 +267,7 @@ pub fn entries(app: &App) -> Vec<(Rc<Zone>, Entry)> {
 }
 
 /// The row's second line: what the agent says it's working on.
-fn task_of(term: &vte::Terminal) -> String {
+pub fn task_of(term: &vte::Terminal) -> String {
     #[allow(deprecated)] // window_title: see pane::new_tab
     let title = term
         .window_title()

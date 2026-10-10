@@ -57,10 +57,19 @@ const CSS: &str = "
 }
 /* The sidebar's Agents section (agent_panel.rs): a header that folds it,
    then one row per running agent with its state dot, name, zone and task. */
+/* The header that folds the sidebar's zone list (window.rs). */
+.zone-list-header { margin: 4px 6px; font-weight: bold; }
+.zone-list-header .zone-count { opacity: 0.55; font-weight: normal; }
 .agent-panel { border-top: 1px solid var(--sidebar-border-color); }
 .agent-panel-header { margin: 4px 6px; font-weight: bold; }
 .agent-panel-header .agent-count { opacity: 0.55; font-weight: normal; }
 .agent-row { padding: 4px 8px; }
+/* The workspace switcher (zone_switcher.rs): zone rows, each followed by a
+   row per agent running in it. */
+.zone-switcher-zone { padding: 6px 8px; }
+.zone-switcher-agent { padding: 2px 8px; min-height: 0; }
+.zone-switcher-agent .agent-name { font-weight: bold; font-size: 0.9em; }
+.zone-switcher-agent .agent-task { font-size: 0.9em; opacity: 0.7; }
 .agent-row .agent-name { font-weight: bold; }
 .agent-row .agent-zone,
 .agent-row .agent-task { font-size: 0.85em; opacity: 0.7; }
