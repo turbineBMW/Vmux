@@ -40,7 +40,16 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
         "<Control><Alt>a",
     ),
     ("focus-agents", "Focus Agents List", ""),
-    ("ask-agent", "Ask Agent…", "<Control><Alt>apostrophe"),
+    (
+        "ask-agent",
+        "Ask for a Command…",
+        "<Control><Alt>apostrophe",
+    ),
+    (
+        "ask-agent-split",
+        "Ask Agent in a New Terminal…",
+        "<Control><Alt>semicolon",
+    ),
     ("move-zone-up", "Move Zone Up", "<Control><Shift>Page_Up"),
     (
         "move-zone-down",
@@ -357,8 +366,9 @@ fn ask_agent_group(app: &Rc<App>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     group.set_title("Ask Agent");
     group.set_description(Some(&format!(
-        "{} opens a prompt for your own Claude Code or Codex, started next to the terminal you're in, in its directory",
-        pretty_accel(&accel_for(&app.config.borrow(), "ask-agent"))
+        "{} asks your own Claude Code or Codex for a command and puts it at your prompt, unrun. {} starts the agent next to the terminal you're in instead",
+        pretty_accel(&accel_for(&app.config.borrow(), "ask-agent")),
+        pretty_accel(&accel_for(&app.config.borrow(), "ask-agent-split"))
     )));
     let agents: Vec<&str> = AskAgent::ALL.iter().map(|a| a.label()).collect();
     let agent_row = adw::ComboRow::builder()

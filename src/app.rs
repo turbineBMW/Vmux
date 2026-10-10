@@ -187,7 +187,11 @@ impl App {
             }
             "next-agent" => self.goto_agent_needing_attention(),
             "ask-agent" => {
-                crate::ask_dialog::present(self);
+                crate::ask_dialog::present(self, vmux::ask::AskMode::Command);
+                glib::Propagation::Stop
+            }
+            "ask-agent-split" => {
+                crate::ask_dialog::present(self, vmux::ask::AskMode::Agent);
                 glib::Propagation::Stop
             }
             "focus-agents" => {

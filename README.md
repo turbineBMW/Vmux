@@ -49,10 +49,13 @@ the split. Tabs can be dragged between panes.
   where it was when Vmux starts again (Vmux adds a session hook to
   `~/.claude/settings.json` for this, and removes it when you turn it off).
 - **Ask Agent** — Ctrl+Alt+' opens a prompt for your own Claude Code or
-  Codex (no extra AI service: it runs the CLI you already pay for). Type what
-  you're trying to do and the agent starts in a split next to your terminal,
-  in its directory, optionally with the terminal's recent output attached so
-  "why did that fail?" has something to go on. The agent, where it opens and
+  Codex (no extra AI service: it runs the CLI you already pay for). Describe
+  the command you need and it appears at your shell prompt, not yet run, for
+  you to check and press Enter (Claude answers on Haiku, with no tools). Switch
+  the popup to **Agent**, or press Ctrl+Alt+;, and the agent starts in a split
+  next to your terminal to work on it instead. Either way it runs in your
+  terminal's directory, optionally with its recent output attached so "why
+  did that fail?" has something to go on. The agent, where it opens and
   whether the screen is sent are set in Preferences.
 - **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
   inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
