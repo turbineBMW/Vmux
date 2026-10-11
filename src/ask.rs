@@ -1,8 +1,13 @@
-//! Asking a coding agent from anywhere: a request typed into a popup is
-//! handed to the user's own agent CLI (Claude Code or Codex), started in a
-//! terminal next to the one they were in, in its directory. Optionally the
-//! request carries that terminal's recent output, so "why did this fail?"
-//! has something to go on.
+//! Asking a coding agent from anywhere: a request typed into a popup goes to
+//! the user's own agent CLI (Claude Code or Codex). By default the agent is
+//! asked, one-shot, for a single shell command, which lands at the prompt of
+//! the terminal they were in, unrun, for them to review ([`AskMode::Command`]).
+//! Or the agent starts in a terminal next to theirs, in its directory, to work
+//! on the request ([`AskMode::Agent`]). Optionally the request carries that
+//! terminal's recent output, so "why did this fail?" has something to go on.
+//!
+//! For a command, the agent runs without tools, hooks or a saved session, on
+//! a quick model: it only has to answer.
 //!
 //! The agent runs as a job of an ordinary shell, so it is tracked like any
 //! agent the user starts by hand and the shell stays behind when it exits.
@@ -41,6 +46,16 @@ impl AskAgent {
             AskAgent::Codex => "codex",
         }
     }
+}
+
+/// What the popup does with a request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AskMode {
+    /// Ask for one shell command and put it at the prompt, unrun.
+    #[default]
+    Command,
+    /// Start the agent next to the asking terminal to work on the request.
+    Agent,
 }
 
 /// Where the agent's terminal opens, relative to the asking terminal.
@@ -103,8 +118,7 @@ pub fn compose_prompt(request: &str, screen: Option<&str>) -> String {
     let Some(screen) = screen.filter(|s| !s.trim().is_empty()) else {
         return request.to_string();
     };
-    let longest = screen.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let fence = "`".repeat(longest.max(2) + 1);
+    let fence = fence_for(screen);
     format!(
         "{request}\n\nThis is what my terminal was showing when I asked:\n\n{fence}\n{screen}\n{fence}"
     )
@@ -119,6 +133,167 @@ pub fn command_line(agent: AskAgent, prompt_file: &Path) -> String {
         agent.command(),
         crate::agent_session::shell_quote(&prompt_file.to_string_lossy())
     )
+}
+
+/// Where the command will run, told to the agent along with the request.
+#[derive(Default)]
+pub struct CommandContext<'a> {
+    /// The shell's name, e.g. `bash`.
+    pub shell: &'a str,
+    pub os: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    /// Some of the entries in `cwd`, directories marked with a trailing `/`.
+    pub files: &'a [String],
+    /// The asking terminal's recent output.
+    pub screen: Option<&'a str>,
+}
+
+/// The prompt that asks for a command: the rules for the reply, what's known
+/// about where it will run, then the request.
+pub fn command_prompt(request: &str, cx: &CommandContext) -> String {
+    let mut p = String::from(
+        "Turn the request at the end into a single shell command. It will be put at my \
+         shell prompt for me to review and run myself.\n\n\
+         Reply with the command and nothing else: no explanation, no Markdown, no code \
+         fence. Keep it to one line, chaining steps with && or pipes. If a shell \
+         command can't do it, reply with one line starting with \"# \" that says why.\n\n",
+    );
+    p.push_str(&format!("Shell: {}\n", cx.shell));
+    if let Some(os) = cx.os {
+        p.push_str(&format!("Operating system: {os}\n"));
+    }
+    if let Some(cwd) = cx.cwd {
+        p.push_str(&format!("Working directory: {cwd}\n"));
+    }
+    if !cx.files.is_empty() {
+        p.push_str(&format!("Files there: {}\n", cx.files.join(", ")));
+    }
+    if let Some(screen) = cx.screen.filter(|s| !s.trim().is_empty()) {
+        let fence = fence_for(screen);
+        p.push_str(&format!(
+            "\nMy terminal's recent output:\n\n{fence}\n{screen}\n{fence}\n"
+        ));
+    }
+    p.push_str(&format!("\nRequest: {}", request.trim()));
+    p
+}
+
+/// The argv that asks `agent` one question, the prompt on stdin. Claude
+/// answers on stdout; Codex writes its answer to `answer_file`.
+pub fn command_argv(agent: AskAgent, answer_file: &Path) -> Vec<String> {
+    let args: &[&str] = match agent {
+        AskAgent::Claude => &[
+            "claude",
+            "-p",
+            "--model",
+            "haiku",
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--settings",
+            r#"{"disableAllHooks":true}"#,
+        ],
+        AskAgent::Codex => &[
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "-c",
+            r#"model_reasoning_effort="low""#,
+            "--output-last-message",
+        ],
+    };
+    let mut argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    if agent == AskAgent::Codex {
+        argv.push(answer_file.to_string_lossy().into_owned());
+        // The prompt comes on stdin.
+        argv.push("-".into());
+    }
+    argv
+}
+
+/// The command in an agent's reply: control characters dropped, a code fence
+/// or wrapping backticks and a `$ ` prompt taken off. `None` when nothing is
+/// left.
+pub fn clean_command(reply: &str) -> Option<String> {
+    let reply: String = reply
+        .chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect();
+    let mut lines: Vec<&str> = reply.trim().lines().collect();
+    if lines
+        .first()
+        .is_some_and(|l| l.trim_start().starts_with("```"))
+    {
+        lines.remove(0);
+        if let Some(end) = lines.iter().position(|l| l.trim_start().starts_with("```")) {
+            lines.truncate(end);
+        }
+    }
+    let body = lines.iter().filter(|l| !l.trim().is_empty());
+    if body.clone().count() > 0 && body.clone().all(|l| l.starts_with("$ ")) {
+        for l in &mut lines {
+            *l = l.strip_prefix("$ ").unwrap_or(l);
+        }
+    }
+    let mut cmd = lines.join("\n").trim().to_string();
+    if !cmd.contains('\n')
+        && cmd.len() > 2
+        && cmd.starts_with('`')
+        && cmd.ends_with('`')
+        && !cmd[1..cmd.len() - 1].contains('`')
+    {
+        cmd = cmd[1..cmd.len() - 1].trim().to_string();
+    }
+    (!cmd.is_empty()).then_some(cmd)
+}
+
+/// The distribution's name from os-release text (`PRETTY_NAME`, else `NAME`).
+pub fn os_release_name(text: &str) -> Option<String> {
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix('='))
+            .map(|v| v.trim().trim_matches('"').to_string())
+            .filter(|v| !v.is_empty())
+    };
+    field("PRETTY_NAME").or_else(|| field("NAME"))
+}
+
+/// This machine's OS, for the command prompt.
+pub fn os_name() -> Option<String> {
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|t| os_release_name(&t))
+        .or_else(|| Some(std::env::consts::OS.to_string()))
+}
+
+/// Up to `max` entries of `dir`, sorted, directories marked with `/`.
+pub fn list_dir(dir: &Path, max: usize) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                format!("{name}/")
+            } else {
+                name
+            }
+        })
+        .collect();
+    names.sort();
+    names.truncate(max);
+    names
+}
+
+/// A backtick fence longer than any backtick run in `text`.
+fn fence_for(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
 }
 
 /// Prompt files older than this are swept when a new one is written. They
@@ -228,6 +403,99 @@ mod tests {
             command_line(AskAgent::Codex, Path::new("/tmp/it's here")),
             "codex -- \"$(cat '/tmp/it'\\''s here')\""
         );
+    }
+
+    #[test]
+    fn command_prompt_carries_the_context_and_the_request() {
+        let files = vec!["Cargo.toml".to_string(), "src/".to_string()];
+        let p = command_prompt(
+            " run the tests \n",
+            &CommandContext {
+                shell: "bash",
+                os: Some("Arch Linux"),
+                cwd: Some("/home/me/vmux"),
+                files: &files,
+                screen: Some("$ cargo test\nerror"),
+            },
+        );
+        assert!(p.contains("\nShell: bash\n"));
+        assert!(p.contains("\nOperating system: Arch Linux\n"));
+        assert!(p.contains("\nWorking directory: /home/me/vmux\n"));
+        assert!(p.contains("\nFiles there: Cargo.toml, src/\n"));
+        assert!(p.contains("\n```\n$ cargo test\nerror\n```\n"));
+        assert!(p.ends_with("\nRequest: run the tests"));
+
+        let bare = command_prompt(
+            "x",
+            &CommandContext {
+                shell: "fish",
+                ..Default::default()
+            },
+        );
+        assert!(!bare.contains("Working directory"));
+        assert!(!bare.contains("recent output"));
+    }
+
+    #[test]
+    fn command_argv_asks_without_tools_or_a_session() {
+        let file = Path::new("/run/user/1000/vmux/ask-answer.txt");
+        let claude = command_argv(AskAgent::Claude, file);
+        assert_eq!(claude[..2], ["claude", "-p"]);
+        assert!(claude.windows(2).any(|w| w == ["--tools", ""]));
+        assert!(!claude.iter().any(|a| a.contains("ask-answer")));
+        let codex = command_argv(AskAgent::Codex, file);
+        assert_eq!(codex[..2], ["codex", "exec"]);
+        assert!(codex.windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        assert_eq!(
+            codex[codex.len() - 3..],
+            [
+                "--output-last-message",
+                "/run/user/1000/vmux/ask-answer.txt",
+                "-"
+            ]
+        );
+    }
+
+    #[test]
+    fn clean_command_unwraps_what_models_add() {
+        assert_eq!(
+            clean_command("find . -size +100M\n").as_deref(),
+            Some("find . -size +100M")
+        );
+        assert_eq!(
+            clean_command("```bash\nls -la | head\n```\n").as_deref(),
+            Some("ls -la | head")
+        );
+        assert_eq!(clean_command("`du -sh *`").as_deref(), Some("du -sh *"));
+        assert_eq!(clean_command("$ git status").as_deref(), Some("git status"));
+        assert_eq!(clean_command("echo `date`").as_deref(), Some("echo `date`"));
+        assert_eq!(clean_command("ls\x1b[0m\x07").as_deref(), Some("ls[0m"));
+        assert_eq!(clean_command("  \n```\n```"), None);
+    }
+
+    #[test]
+    fn os_release_name_prefers_the_pretty_name() {
+        assert_eq!(
+            os_release_name("NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\n")
+                .as_deref(),
+            Some("Arch Linux")
+        );
+        assert_eq!(os_release_name("NAME=Fedora\n").as_deref(), Some("Fedora"));
+        assert_eq!(os_release_name("ID=x\n"), None);
+    }
+
+    #[test]
+    fn list_dir_marks_directories_and_caps_the_count() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "").unwrap();
+        std::fs::write(dir.path().join("README.md"), "").unwrap();
+        assert_eq!(
+            list_dir(dir.path(), 10),
+            vec!["Cargo.toml", "README.md", "src/"]
+        );
+        assert_eq!(list_dir(dir.path(), 1), vec!["Cargo.toml"]);
+        assert!(list_dir(&dir.path().join("missing"), 10).is_empty());
     }
 
     #[test]

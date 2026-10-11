@@ -246,7 +246,9 @@ pub fn wire_chrome(app: &Rc<App>, chrome: &Chrome) {
     {
         let app = app.clone();
         let act = gio::SimpleAction::new("ask-agent", None);
-        act.connect_activate(move |_, _| crate::ask_dialog::present(&app));
+        act.connect_activate(move |_, _| {
+            crate::ask_dialog::present(&app, vmux::ask::AskMode::Command)
+        });
         chrome.window.add_action(&act);
     }
     {
