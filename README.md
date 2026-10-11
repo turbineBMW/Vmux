@@ -1,11 +1,20 @@
 # Vmux
 
-A minimal, low-resource terminal workspace for Linux — a
-[cmux](https://github.com/manaflow-ai/cmux)-style shell built on
-**GTK4 + libadwaita + VTE** instead of libghostty. The whole UI idles at ~0% CPU.
+**A terminal workspace for people who run five projects and three coding
+agents at once.** A [cmux](https://github.com/manaflow-ai/cmux)-style shell
+for Linux, built on **GTK4 + libadwaita + VTE**. It idles at ~0% CPU, so
+the only thing eating your battery is the agents.
 
-Each **work zone** (left sidebar) is an independent workspace containing
-**panes you split as needed**; every pane has **its own tab strip**:
+![Zones, splits and tabs](docs/media/navigation.gif)
+
+## The tour
+
+### 🗂️ Zones, splits and tabs
+
+Each **zone** in the sidebar is a project workspace with its own layout, tabs,
+directories and focused pane. Split right or down as often as you like. Every
+pane gets its own tab strip, and you can drag tabs between panes. Close a
+pane's last tab and the split folds back up.
 
 ```
 ┌──────────┬───────────────────────────┬───────────────────┐
@@ -15,189 +24,183 @@ Each **work zone** (left sidebar) is an independent workspace containing
 │ ● work   │  $ nvim .                 │  $ claude         │
 │   blog   │                           │                   │
 └──────────┴───────────────────────────┴───────────────────┘
-            └── one pane ──────────────┘└── another pane ──┘
 ```
 
-Nothing is created for you: a new zone starts as a single pane with one shell
-tab. Split it (right/down) to add panes, open tabs per pane with the `+`
-button or the New Tab shortcut, and run whatever you want in them (your editor
-on the left, `claude` on the right, …). Closing a pane's last tab collapses
-the split. Tabs can be dragged between panes.
+- `Alt+1`…`9` jumps straight to a zone, `Ctrl+Alt+L` flips back to the last
+  one, and `Ctrl+Alt+/` opens a search-as-you-type switcher that searches zones *and* the
+  agents running inside them.
+- Every zone shows its **git branch and dirty state** under its name, plus a
+  picture chip (initials by default, or right-click it to pick an image).
+- The zone list folds away under its header when you'd rather see agents.
+- Layout, tabs and directories all survive a restart.
 
-## Features
+### 📁 New zone, new folder
 
-- **Zones** — named workspaces in a sidebar, each remembering its own pane
-  layout, tabs, working directories and focused pane. Reorder, rename and
-  close them from the keyboard or the right-click menu.
-- **Splits and tabs** — arbitrary right/down splits, a tab strip per pane,
-  directional pane focus, resizable splits, drag-and-drop tabs between panes.
-- **Desktop notifications** — programs that emit OSC 9 / OSC 777 / kitty
-  OSC 99 (e.g. Claude Code, ninja, `notify-send`-style shell helpers) raise a
-  real desktop notification naming the zone, even when it's hidden. Clicking
-  the notification switches to that zone. A bell in a hidden zone shows an
-  attention dot in the sidebar and can optionally notify too.
-- **Coding agents** — Claude Code, Codex, Gemini CLI, OpenCode and Copilot
-  CLI are recognized in any tab. The
-  tab shows a spinner while the agent works, and a mark when it is waiting
-  for your approval or answer, or finished while you were looking elsewhere;
-  the zone's picture rings until you look. An **Agents** section under the
-  zones lists every running agent from every zone, most urgent first, and
-  clicking one jumps to its tab (as does Ctrl+Alt+A, "Go to Agent Needing
-  Attention"). Desktop notifications for agents that need you can be turned
-  on in Preferences, for agents that don't send their own. With **Resume
-  agents after restart** on, each tab's Claude Code conversation reopens
-  where it was when Vmux starts again (Vmux adds a session hook to
-  `~/.claude/settings.json` for this, and removes it when you turn it off).
-- **Ask Agent** — Ctrl+Alt+' opens a prompt for your own Claude Code or
-  Codex (no extra AI service: it runs the CLI you already pay for). Describe
-  the command you need and it appears at your shell prompt, not yet run, for
-  you to check and press Enter (Claude answers on Haiku, with no tools). Switch
-  the popup to **Agent**, or press Ctrl+Alt+;, and the agent starts in a split
-  next to your terminal to work on it instead. Either way it runs in your
-  terminal's directory, optionally with its recent output attached so "why
-  did that fail?" has something to go on. The agent, where it opens and
-  whether the screen is sent are set in Preferences.
-- **Inline images** — SIXEL, the kitty graphics protocol and iTerm2
-  inline images all render in the terminal (`icat`, `chafa`, `timg`, `yazi`,
-  image previews in `ranger`/`lf`, `imgcat`, matplotlib's kitty backend, …).
-  Stock libvte has no image support on GTK4, so Vmux links its own
-  [libvte fork](https://github.com/turbineBMW/vte) (branch `image-support`).
-- **Remote hosts on tabs** — a tab running `ssh`, `mosh`, `et` or `telnet`
-  is titled with the host it's connected to (the name you typed, e.g. an
-  `~/.ssh/config` alias). Hover it for what `ssh -G` resolves that to. If the
-  remote shell emits OSC 7, a further hop (`ssh bastion`, then `ssh db`)
-  relabels the tab with the innermost machine.
-- **Git status** — each zone shows its branch and working-tree state under its name in the sidebar, in colours you can theme.
-- **Live CSS themes** — every colour, font and chrome setting is a CSS token
-  edited from Preferences or by hand; changes apply instantly and can be
-  saved as named themes.
-- **Rebindable keys** — every action is rebindable from Preferences.
-- **Persistent state** — layout and settings survive restarts.
+![Creating a zone from a new folder](docs/media/new-zone.gif)
+
+`Ctrl+Shift+N` opens a path picker that completes as you type. Name a folder
+that doesn't exist yet and Vmux creates it and opens the zone there, which is
+handy for "I have an idea, start a project *now*".
+
+### 🤖 Coding agents, herded
+
+![Agents in the sidebar](docs/media/agents.gif)
+
+Vmux recognizes **Claude Code, Codex, Gemini CLI, OpenCode and Copilot CLI** in
+any tab.
+
+- Tabs show a spinner while an agent works and a mark when it's waiting on you
+  or finished while you were away. The zone's picture rings until you look.
+- The **Agents** section lists every agent in every zone, most urgent first.
+  Click one, or press `Ctrl+Alt+A`, to jump to whoever needs you.
+- Optional desktop notifications for agents that don't send their own.
+- **Resume agents after restart** reopens each tab's Claude Code conversation
+  where you left it. Vmux adds a session hook to `~/.claude/settings.json`,
+  and removes it again when you turn the option off.
+
+### 💬 Ask Agent
+
+![Ask Agent writing commands](docs/media/ask-agent.gif)
+
+Forgot the `find` flags again? Press `Ctrl+Alt+'` and describe what you want.
+Your own Claude Code or Codex (the CLI you already pay for, with no extra AI
+service) writes the command and **puts it at your prompt without running it**.
+You read it and press Enter. Claude answers on Haiku with no tools, so it's
+quick.
+
+Switch the popup to **Agent** (or press `Ctrl+Alt+;`) and a full agent opens in
+a split next to you to do the work itself. Either way it runs in your
+terminal's directory, and can see the recent output when you tick *Include
+what's on screen*, so "why did that fail?" just works.
+
+### 🎨 Themes that follow your desktop
+
+![Following Omarchy themes live](docs/media/themes.gif)
+
+On [Omarchy](https://omarchy.org/), *Appearance → Follow Omarchy theme*
+recolours Vmux live on every `omarchy theme set`: terminal palette, chrome,
+tabs and git colours. A theme can also ship its own `vmux.css`.
+
+Not on Omarchy? Every colour, font and chrome setting is a CSS token in
+`~/.config/vmux/style.css`. Edit it from Preferences or by hand, watch it
+apply instantly, and save the result as a named theme.
+
+### ✨ And also
+
+- **🔔 Real notifications.** OSC 9 / 777 / kitty OSC 99 (from Claude Code,
+  ninja, `notify-send`-style helpers and so on) raise a desktop notification
+  naming the zone. Click it to go there. A bell in a hidden zone puts a dot
+  on its sidebar entry.
+- **🖼️ Inline images.** SIXEL, kitty graphics and iTerm2 images all render
+  (`icat`, `chafa`, `timg`, `yazi`, `ranger`/`lf` previews, matplotlib…), using
+  Vmux's own [libvte fork](https://github.com/turbineBMW/vte).
+- **🌐 Remote host tabs.** A tab running `ssh`, `mosh`, `et` or `telnet` is
+  titled with the host. Hover it to see what `ssh -G` resolves. With OSC 7 on
+  the remote side, `ssh bastion` → `ssh db` relabels the tab with the innermost
+  hop.
+- **⌨️ Every key is rebindable** in Preferences.
 
 ## Install
 
-Dependencies (Arch): `pacman -S --needed base-devel gtk4 libadwaita meson
-ninja glib2-devel pkgconf` plus a Rust toolchain. Other distros need the
-equivalent dev packages; libadwaita ≥ 1.6 is required.
-
-Vmux does not use the system `vte4`: `scripts/build-vte.sh` (run
-automatically by `install.sh`) builds the [libvte fork](https://github.com/turbineBMW/vte)
-with inline image support into `vendor/vte`, and `.cargo/config.toml` points
-the build and the binary's rpath at it. The fork tracks libvte 0.84; the
-system `vte4` package can stay installed for other applications. To build
-against a local checkout instead of cloning, set `VTE_SRC=/path/to/vte`.
-
-User-local install (binaries to `~/.local/bin`, plus the `.desktop` file and
-icons so launchers and notifications show Vmux properly):
+Arch: `pacman -S --needed base-devel gtk4 libadwaita meson ninja glib2-devel
+pkgconf`, plus a Rust toolchain. Other distros need the equivalent dev
+packages, and libadwaita ≥ 1.6.
 
 ```sh
-./install.sh
+./install.sh          # builds everything into ~/.local/bin, plus .desktop + icons
 ```
 
-Or just build and run from the tree:
+Or run it from the tree:
 
 ```sh
-cargo build --release
-./target/release/vmux
+cargo build --release && ./target/release/vmux
 ```
 
-Two binaries are produced: `vmux` (the app) and `vmux-relay`, a small
-`script(1)`-style PTY shim that vte spawns in front of your shell. libvte
-offers no hook for unknown OSC sequences, so the relay watches the output
-stream for notification OSCs and forwards them to Vmux as vte termprops,
-passing everything else through untouched. Keep both on `PATH` (or use
-`install.sh`, which does).
+<details>
+<summary>What's actually being built</summary>
+
+- **The vendored libvte.** `scripts/build-vte.sh` (run by `install.sh`) builds
+  the [libvte fork](https://github.com/turbineBMW/vte) (branch
+  `image-support`, tracking libvte 0.84) into `vendor/vte`, and
+  `.cargo/config.toml` points the build and rpath at it. The system `vte4`
+  package can stay installed. To use a local checkout, set
+  `VTE_SRC=/path/to/vte`.
+- **Two binaries.** `vmux` is the app. `vmux-relay` is a small
+  `script(1)`-style PTY shim in front of your shell: libvte has no hook for
+  unknown OSC sequences, so the relay picks out notification OSCs and passes
+  them to Vmux as termprops, leaving everything else untouched. Keep both on
+  `PATH`.
+
+</details>
 
 ## Keybindings
 
-All of these are **rebindable** in Preferences (gear icon, or `Ctrl+,`) —
-click a row, press the new combination (Backspace unbinds, Esc cancels).
-Assigning a combination that's in use steals it from the other action.
-Defaults:
+All of these can be rebound under Preferences → Keybindings (`Ctrl+,`). Click
+a row and press the new keys. Backspace unbinds and Esc cancels.
 
 | Key | Action |
 |---|---|
-| `Ctrl+Shift+T` | New tab in the focused pane (inherits current directory) |
-| `Ctrl+Shift+W` | Close focused tab (last tab closes the pane) |
+| `Ctrl+Shift+T` / `Ctrl+Shift+W` | New tab (same directory) / close tab |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next tab |
-| `Ctrl+Shift+E` | Split pane right |
-| `Ctrl+Shift+O` | Split pane down |
+| `Ctrl+Shift+E` / `Ctrl+Shift+O` | Split right / down |
 | `Ctrl+Shift+A` | Focus next pane |
 | `Ctrl+Alt+←/→/↑/↓` | Focus pane in that direction |
-| `Ctrl+Shift+=` / `Ctrl+Shift+-` | Grow / shrink focused pane |
+| `Ctrl+Shift+=` / `Ctrl+Shift+-` | Grow / shrink pane |
 | `Ctrl+Shift+N` | New zone |
-| `Ctrl+Alt+W` | Close zone |
-| `Ctrl+Alt+R` | Rename zone |
+| `Ctrl+Alt+W` / `Ctrl+Alt+R` | Close / rename zone |
 | `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Previous / next zone |
-| `Ctrl+Alt+L` | Flip to the last focused zone |
-| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move zone up / down in the sidebar |
-| `Alt+1`…`Alt+9`, `Ctrl+Alt+1`…`Ctrl+Alt+0` | Switch to zone N (fixed; `0` is the tenth) |
+| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move zone up / down |
+| `Alt+1`…`Alt+9`, `Ctrl+Alt+1`…`Ctrl+Alt+0` | Switch to zone N |
+| `Ctrl+Alt+L` | Last focused zone |
+| `Ctrl+Alt+/` | Zone & agent switcher |
+| `Ctrl+Alt+A` | Go to agent needing attention |
+| `Ctrl+Alt+'` | Ask for a command |
+| `Ctrl+Alt+;` | Ask an agent in a new split |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Font scale |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Font size |
 | `F9` | Toggle sidebar |
 | `Ctrl+,` | Preferences |
 
-Right-click a zone in the sidebar to rename or remove it. Each zone shows a
-picture chip — the name's initials by default; right-click the chip to choose
-an image file or go back to initials — and a number chip giving its position,
-matching the `Alt+N` shortcuts.
+## Configuration
 
-## Preferences
+Preferences (gear icon or `Ctrl+,`) has three pages:
 
-The settings dialog has three pages:
-
-- **General** — scrollback lines, shell override (new terminals), window
-  behaviour, and notifications: enable/disable, notify on bell, and the
-  notification sound (system default, a custom file, or none). Vmux never
-  plays audio itself — the choice is passed as a hint to
+- **General** covers scrollback, shell override, window behaviour, and
+  notifications (on/off, notify on bell, sound). The sound is only a hint to
   `org.freedesktop.Notifications`, so your desktop's do-not-disturb rules
-  decide whether anything is heard. A "send a test notification" button lets
-  you check the result.
-- **Appearance** — follow the Omarchy desktop theme, quick-switch among saved
-  themes, save the current stylesheet as a named theme, and labelled controls
-  for the terminal font, every terminal and ANSI colour, window chrome,
-  tab/session indicators, and Git status colours. Each colour control writes
-  directly to the live-reloaded `style.css`; an Advanced row opens the file
-  for hand editing.
-- **Keybindings** — every action with its current shortcut; click to rebind.
-
-### Omarchy themes
-
-On [Omarchy](https://omarchy.org/), *Appearance → Follow Omarchy theme* takes
-vmux's colours from the active desktop theme and follows every
-`omarchy theme set` live — terminal palette, window chrome, tab and Git
-colours, and light/dark. The palette is read straight from
-`~/.local/state/omarchy/current/theme/colors.toml` with the same fallbacks
-`omarchy-theme-color` applies, so a theme renders in vmux exactly as it does
-in Alacritty or Ghostty, legacy `color0`..`color15` themes included.
-
-It is layered *over* `style.css` rather than written into it, so the setting
-is reversible: turn it off and your own colours are back, untouched. While it
-is on, the colour controls are dimmed — font, opacity, and every non-colour
-rule in `style.css` still apply, as does the alpha on
-`vmux_terminal_background`, so a transparent terminal stays transparent.
-
-A theme can also take full control by shipping a `vmux.css` (plain GTK CSS,
-same tokens as `style.css`), either in the theme directory or generated from a
-`~/.config/omarchy/themed/vmux.css.tpl` template; vmux uses it verbatim in
-place of the derived palette.
-
-### Files
+  still apply.
+- **Appearance** covers Omarchy theme following, saved themes, and labelled
+  controls for font, terminal/ANSI colours, chrome, indicators and git colours.
+- **Keybindings** lets you rebind every action.
 
 | Path | Contents |
 |---|---|
-| `~/.config/vmux/state.json` | Zones, layout, tabs and behavioural settings (`config.*`, including `config.keybindings` overrides) |
-| `~/.config/vmux/style.css` | Live stylesheet; every colour token is documented inline |
+| `~/.config/vmux/state.json` | Zones, layout, tabs, settings and keybinding overrides |
+| `~/.config/vmux/style.css` | Live stylesheet, with every token documented inline |
 | `~/.config/vmux/themes/*.css` | Named theme snapshots |
-| `~/.local/state/omarchy/current/theme/` | Read-only: the Omarchy theme followed when that setting is on |
 
-Set terminal opacity by giving `vmux_terminal_background` an `rgba()` value
-with an alpha below 1.0.
+For a see-through terminal, give `vmux_terminal_background` an `rgba()` with
+alpha < 1.
 
-### Directory tracking (OSC 7)
+<details>
+<summary>Omarchy theme details</summary>
 
-"New tab in current directory" and cwd persistence rely on the shell emitting
-OSC 7 (foot users usually have this already). For zsh, if you don't:
+The palette is read from `~/.local/state/omarchy/current/theme/colors.toml`
+with the same fallbacks as `omarchy-theme-color`, so themes match Alacritty
+and Ghostty exactly. Legacy `color0`..`color15` themes work too. It's layered
+*over* `style.css`, so turning it off restores your own colours. While it's
+on, font, opacity and the alpha of `vmux_terminal_background` still apply.
+A theme can take full control with a `vmux.css` (same tokens as `style.css`)
+in its directory, or generated from `~/.config/omarchy/themed/vmux.css.tpl`.
+
+</details>
+
+<details>
+<summary>Directory tracking (OSC 7)</summary>
+
+New tabs open in the current directory, and directories persist across
+restarts, when your shell emits OSC 7. foot users usually have this already.
+For zsh:
 
 ```zsh
 function _vmux_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD" }
@@ -205,6 +208,8 @@ add-zsh-hook -Uz chpwd _vmux_osc7 && _vmux_osc7
 ```
 
 Without it, new tabs fall back to the zone's directory.
+
+</details>
 
 ## Development
 
@@ -214,26 +219,24 @@ cargo clippy --all-targets
 cargo run                  # debug build
 ```
 
-Source layout: `src/lib.rs` is the core, shared by the desktop app, the PTY
-shim and other front-ends (such as a phone app): zones and tabs state
-(`state`), building terminals (`term`, whose `TerminalHost` trait is how a
-front-end receives a terminal's focus, bell, notifications and exit), the
-relay (`relay`, `osc_scan`), remote-host labels (`remote`, `remote_tab`),
-coding-agent detection (`agents`), desktop notifications (`notify`), git
-status (`git`) and theming (`omarchy`, `style`, `text_bindings`).
-`src/main.rs` is the desktop app, with one module per UI concern (`zone`,
-`pane`, `splits`, `leaf`, `appearance`, `keybinds`, …), and
-`src/bin/vmux-relay.rs` the PTY shim (its code is the library's `relay`).
+`src/lib.rs` is the core, shared by the desktop app, the PTY shim and other
+front-ends such as a phone app. It holds zone/tab state (`state`), terminals
+(`term`, whose `TerminalHost` trait is how a front-end hears about focus,
+bells, notifications and exit), the relay (`relay`, `osc_scan`), remote-host
+labels (`remote`, `remote_tab`), agent detection (`agents`), notifications
+(`notify`), git status (`git`) and theming (`omarchy`, `style`,
+`text_bindings`). `src/main.rs` is the desktop app, with one module per UI
+concern (`zone`, `pane`, `splits`, `leaf`, `appearance`, `keybinds`, …).
+`src/bin/vmux-relay.rs` is the PTY shim.
 
 ## Known limitations
 
 - A tab's title/cwd tracking follows its first terminal.
-- State is saved on changes (debounced) and on window close — not on
-  SIGKILL/crash.
-- Running programs are not restored across restarts (tabs reopen as shells in
-  their saved directories).
-- UI is forced dark.
-- Linux only (relies on a Linux PTY and the freedesktop notification bus).
+- State saves on change (debounced) and on close, but not on SIGKILL or a crash.
+- Apart from Claude Code with *Resume agents* on, running programs aren't
+  restored. Tabs reopen as shells in their saved directories.
+- The UI is always dark.
+- Linux only (Linux PTYs and the freedesktop notification bus).
 
 ## License
 
