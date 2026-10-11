@@ -1,0 +1,11 @@
+# Lists Vmux in Oscovery (https://github.com/turbineBMW/Oscovery).
+# Every field is optional; listed = false takes it out again.
+summary = "A terminal workspace for people who run five projects and three coding agents at once"
+category = "Developer Tools"
+tags = ["terminal", "multiplexer", "agents", "gtk", "rust"]
+previews = [
+  "https://raw.githubusercontent.com/turbineBMW/Vmux/main/docs/media/navigation.gif",
+  "https://raw.githubusercontent.com/turbineBMW/Vmux/main/docs/media/agents.gif",
+  "https://raw.githubusercontent.com/turbineBMW/Vmux/main/docs/media/themes.gif",
+]
+install = "install-script"
