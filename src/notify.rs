@@ -1,12 +1,10 @@
 //! Desktop notifications over org.freedesktop.Notifications directly
-//! (rather than `gio::Notification`), so we control the hints and actions:
-//! the sound request, the desktop-entry/image-path for the app icon, and
-//! the xdg-activation token the daemon hands us when the user clicks — the
-//! only portable way to take focus on Wayland.
-//!
-//! Vmux never plays audio itself: the sound choice travels as a hint on the
-//! notification, so the daemon (and the shell's do-not-disturb rules) stays
-//! in charge of whether anything is actually heard.
+//! (rather than `gio::Notification`), so we control the desktop-entry/image
+//! hints and the xdg-activation token the daemon hands us when the user
+//! clicks — the only portable way to take focus on Wayland. Sound is played
+//! locally because some notification servers, including Omarchy Shell,
+//! ignore the freedesktop sound hints.
+use crate::sound;
 use crate::state::Sound;
 use gtk4::gio;
 use gtk4::glib::{self, prelude::*};
@@ -113,20 +111,9 @@ impl Notifier {
         }
         hints.insert("category".into(), "im".to_variant());
         hints.insert("urgency".into(), 1u8.to_variant());
-        match sound {
-            Sound::SystemDefault => {
-                hints.insert("sound-name".into(), "message-new-instant".to_variant());
-            }
-            Sound::File(p) => {
-                hints.insert(
-                    "sound-file".into(),
-                    p.to_string_lossy().as_ref().to_variant(),
-                );
-            }
-            Sound::None => {
-                hints.insert("suppress-sound".into(), true.to_variant());
-            }
-        }
+        // Playback happens locally after Notify succeeds. Ask capable daemons
+        // to stay quiet so the same notification never sounds twice.
+        hints.insert("suppress-sound".into(), true.to_variant());
         let args = (
             APP_NAME,
             replaces,
@@ -139,6 +126,7 @@ impl Notifier {
         )
             .to_variant();
         let me = self.clone();
+        let sound = sound.clone();
         glib::spawn_future_local(async move {
             match me
                 .conn
@@ -158,6 +146,7 @@ impl Notifier {
                     let Some(id) = r.child_value(0).get::<u32>() else {
                         return;
                     };
+                    sound::play_notification(&sound);
                     if replaces != 0 && replaces != id {
                         me.zone_of.borrow_mut().remove(&replaces);
                     }

@@ -547,7 +547,7 @@ fn sound_rows(app: &Rc<App>) -> (adw::ComboRow, adw::ActionRow) {
     let choices = gtk::StringList::new(&["System default", "Custom file", "None"]);
     let sound_row = adw::ComboRow::builder()
         .title("Sound")
-        .subtitle("Requested from the notification daemon, so do-not-disturb still applies")
+        .subtitle("Played by Vmux after the notification is sent; do-not-disturb still applies")
         .model(&choices)
         .build();
     let file_row = adw::ActionRow::builder()
@@ -588,8 +588,10 @@ fn sound_rows(app: &Rc<App>) -> (adw::ComboRow, adw::ActionRow) {
         let app = app.clone();
         file_row.connect_activated(move |row| {
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some("Audio"));
-            filter.add_mime_type("audio/*");
+            filter.set_name(Some("Audio files (OGG, WAV, FLAC, Opus, AAC)"));
+            for mime in vmux::sound::SUPPORTED_MIME_TYPES {
+                filter.add_mime_type(mime);
+            }
             let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
             filters.append(&filter);
             let chooser = gtk::FileDialog::builder()
