@@ -86,6 +86,7 @@ impl Zone {
         chip.add_overlay(&agent_badge);
         chip.add_css_class("agent-chip");
         chip.set_valign(gtk::Align::Center);
+        chip.set_visible(app.config.borrow().show_workspace_pictures);
         let dir = state::display_name(&zs.cwd);
         // Token separators are baked into each label's text, so spacing is 0.
         let path_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);

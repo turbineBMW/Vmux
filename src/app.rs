@@ -455,6 +455,13 @@ impl App {
         );
     }
 
+    pub fn sync_workspace_pictures(&self) {
+        let visible = self.config.borrow().show_workspace_pictures;
+        for zone in self.zones.borrow().iter() {
+            zone.agent_chip.set_visible(visible);
+        }
+    }
+
     pub fn add_zone(self: &Rc<Self>, name: &str, cwd: &str) {
         let zs = state::ZoneState {
             name: name.into(),
