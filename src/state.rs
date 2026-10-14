@@ -29,7 +29,7 @@ pub struct Config {
     pub desktop_notifications: bool,
     /// Also raise a desktop notification on the terminal bell.
     pub notify_on_bell: bool,
-    /// Which sound the notification daemon is asked to play.
+    /// Which sound vmux plays when it sends a desktop notification.
     pub notification_sound: Sound,
     /// Move a zone to the top of the sidebar when a coding agent (Claude
     /// Code, Codex) starts working in it.
@@ -92,19 +92,16 @@ impl Default for Config {
     }
 }
 
-/// Which sound the notification daemon is asked to play. Vmux never plays
-/// audio itself: the choice travels as a hint on the notification so the
-/// shell (and its do-not-disturb logic) stays in charge of whether anything
-/// is actually heard.
+/// Which sound vmux plays after a desktop notification is accepted.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(tag = "kind", content = "path", rename_all = "kebab-case")]
 pub enum Sound {
-    /// `sound-name = message-new-instant`, resolved from the system sound theme.
+    /// `message-new-instant`, resolved from the system sound theme.
     #[default]
     SystemDefault,
-    /// `sound-file = <path>`.
+    /// A chosen audio file.
     File(PathBuf),
-    /// `suppress-sound = true`.
+    /// Silent notification.
     None,
 }
 

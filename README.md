@@ -166,9 +166,10 @@ a row and press the new keys. Backspace unbinds and Esc cancels.
 Preferences (gear icon or `Ctrl+,`) has three pages:
 
 - **General** covers scrollback, shell override, window behaviour, and
-  notifications (on/off, notify on bell, sound). The sound is only a hint to
-  `org.freedesktop.Notifications`, so your desktop's do-not-disturb rules
-  still apply.
+  notifications (on/off, notify on bell, sound). Vmux plays the sound itself
+  after sending the desktop notification, including on desktops whose
+  notification service ignores sound hints. Omarchy and GNOME do-not-disturb
+  settings are respected.
 - **Appearance** covers Omarchy theme following, saved themes, and labelled
   controls for font, terminal/ANSI colours, chrome, indicators and git colours.
 - **Keybindings** lets you rebind every action.

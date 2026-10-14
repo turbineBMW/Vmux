@@ -15,6 +15,7 @@ pub mod osc_scan;
 pub mod relay;
 pub mod remote;
 pub mod remote_tab;
+pub mod sound;
 pub mod state;
 pub mod style;
 pub mod term;
