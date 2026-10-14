@@ -73,6 +73,7 @@ fn filter_items(query: &str, zones: &[(String, Vec<String>)]) -> (Vec<Item>, usi
 }
 
 pub fn present_zone_switcher(app: &Rc<App>) {
+    let show_pictures = app.config.borrow().show_workspace_pictures;
     let candidates: Rc<Vec<Candidate>> = Rc::new(
         app.zones
             .borrow()
@@ -140,7 +141,7 @@ pub fn present_zone_switcher(app: &Rc<App>) {
 
     // Row index -> item for whatever the list currently shows.
     let visible: Rc<RefCell<Vec<Item>>> = Rc::new(RefCell::new(Vec::new()));
-    rebuild_list(&list, &candidates, &visible, "");
+    rebuild_list(&list, &candidates, &visible, "", show_pictures);
 
     let choose = {
         let app = app.clone();
@@ -175,7 +176,13 @@ pub fn present_zone_switcher(app: &Rc<App>) {
         let list = list.clone();
         let visible = visible.clone();
         entry.connect_search_changed(move |entry| {
-            rebuild_list(&list, &candidates, &visible, entry.text().as_str());
+            rebuild_list(
+                &list,
+                &candidates,
+                &visible,
+                entry.text().as_str(),
+                show_pictures,
+            );
         });
     }
     {
@@ -274,6 +281,7 @@ fn rebuild_list(
     candidates: &[Candidate],
     visible: &Rc<RefCell<Vec<Item>>>,
     query: &str,
+    show_pictures: bool,
 ) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
@@ -292,8 +300,8 @@ fn rebuild_list(
     let (items, highlight) = filter_items(query, &haystack);
     for &item in &items {
         let row = match item {
-            Item::Zone(z) => zone_row(&candidates[z]),
-            Item::Agent(z, a) => agent_row(&candidates[z].agents[a]),
+            Item::Zone(z) => zone_row(&candidates[z], show_pictures),
+            Item::Agent(z, a) => agent_row(&candidates[z].agents[a], show_pictures),
         };
         list.append(&row);
     }
@@ -303,11 +311,7 @@ fn rebuild_list(
     }
 }
 
-fn zone_row(c: &Candidate) -> gtk::ListBoxRow {
-    let avatar = adw::Avatar::new(AVATAR_SIZE, Some(&c.name), true);
-    avatar.add_css_class("zone-avatar");
-    avatar.set_valign(gtk::Align::Center);
-    crate::zone::apply_avatar(&avatar, c.avatar.as_deref());
+fn zone_row(c: &Candidate, show_pictures: bool) -> gtk::ListBoxRow {
     let number = gtk::Label::new(Some(&(c.zone_index + 1).to_string()));
     number.add_css_class("zone-number");
     number.set_valign(gtk::Align::Center);
@@ -319,7 +323,13 @@ fn zone_row(c: &Candidate) -> gtk::ListBoxRow {
     detail.add_css_class("dim-label");
     detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
     let row_box = gtk::Box::new(gtk::Orientation::Horizontal, ROW_SPACING);
-    row_box.append(&avatar);
+    if show_pictures {
+        let avatar = adw::Avatar::new(AVATAR_SIZE, Some(&c.name), true);
+        avatar.add_css_class("zone-avatar");
+        avatar.set_valign(gtk::Align::Center);
+        crate::zone::apply_avatar(&avatar, c.avatar.as_deref());
+        row_box.append(&avatar);
+    }
     row_box.append(&number);
     row_box.append(&name);
     row_box.append(&detail);
@@ -329,7 +339,7 @@ fn zone_row(c: &Candidate) -> gtk::ListBoxRow {
     row
 }
 
-fn agent_row(a: &AgentLine) -> gtk::ListBoxRow {
+fn agent_row(a: &AgentLine, show_pictures: bool) -> gtk::ListBoxRow {
     let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     dot.add_css_class("agent-dot");
     dot.set_valign(gtk::Align::Center);
@@ -342,8 +352,10 @@ fn agent_row(a: &AgentLine) -> gtk::ListBoxRow {
     task.set_hexpand(true);
     task.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    // Under the zone's name, past its picture.
-    row_box.set_margin_start(AVATAR_SIZE + ROW_SPACING);
+    // Align under the zone name, past its picture when pictures are shown.
+    if show_pictures {
+        row_box.set_margin_start(AVATAR_SIZE + ROW_SPACING);
+    }
     row_box.append(&dot);
     row_box.append(&agent);
     row_box.append(&task);

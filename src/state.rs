@@ -22,6 +22,8 @@ pub struct Config {
     pub hide_titlebar: bool,
     /// Whether the zone sidebar is shown; restored across restarts.
     pub show_sidebar: bool,
+    /// Show each workspace's picture or initials in the sidebar and switcher.
+    pub show_workspace_pictures: bool,
     /// Desktop notifications when a background terminal emits a
     /// notification escape (OSC 9 / 777 / kitty 99).
     pub desktop_notifications: bool,
@@ -70,6 +72,7 @@ impl Default for Config {
             shell: None,
             hide_titlebar: false,
             show_sidebar: true,
+            show_workspace_pictures: true,
             desktop_notifications: true,
             notify_on_bell: false,
             notification_sound: Sound::default(),

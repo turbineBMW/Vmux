@@ -179,6 +179,24 @@ pub fn show_settings(app: &Rc<App>) {
     window_group.add(&titlebar_row);
     general.add(&window_group);
 
+    let workspace_group = adw::PreferencesGroup::new();
+    workspace_group.set_title("Workspaces");
+    let pictures_row = adw::SwitchRow::builder()
+        .title("Show workspace pictures")
+        .subtitle("Show pictures or initials in the sidebar and workspace switcher")
+        .active(app.config.borrow().show_workspace_pictures)
+        .build();
+    {
+        let app = app.clone();
+        pictures_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().show_workspace_pictures = row.is_active();
+            app.sync_workspace_pictures();
+            app.schedule_save();
+        });
+    }
+    workspace_group.add(&pictures_row);
+    general.add(&workspace_group);
+
     let notif_group = adw::PreferencesGroup::new();
     notif_group.set_title("Notifications");
     let notif_row = adw::SwitchRow::builder()
