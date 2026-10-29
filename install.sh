@@ -19,6 +19,9 @@ chmod 644 ~/.local/share/applications/dev.vmux.Vmux.desktop
 for n in 16 32 48 64 128 256 512; do
   install -Dm644 data/icons/vmux-$n.png ~/.local/share/icons/hicolor/${n}x${n}/apps/dev.vmux.Vmux.png
 done
-gtk4-update-icon-cache -q ~/.local/share/icons/hicolor 2>/dev/null || true
+# The scalable icon wraps the full-size art, so launchers that take an SVG over
+# PNGs (Omarchy's does) draw it sharp at any size instead of an upscaled 16px PNG.
+install -Dm644 data/icons/vmux.svg ~/.local/share/icons/hicolor/scalable/apps/dev.vmux.Vmux.svg
+gtk4-update-icon-cache -q -t -f ~/.local/share/icons/hicolor 2>/dev/null || true
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
 echo "installed: ~/.local/bin/vmux"
