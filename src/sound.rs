@@ -145,18 +145,16 @@ fn parse_theme_index(index: &str) -> (Vec<String>, Vec<String>) {
     for line in index.lines().map(str::trim) {
         if line.starts_with('[') {
             in_theme = line == "[Sound Theme]";
-        } else if in_theme {
-            if let Some((key, value)) = line.split_once('=') {
-                let values = value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(String::from);
-                match key.trim() {
-                    "Directories" => dirs.extend(values),
-                    "Inherits" => parents.extend(values),
-                    _ => {}
-                }
+        } else if in_theme && let Some((key, value)) = line.split_once('=') {
+            let values = value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(String::from);
+            match key.trim() {
+                "Directories" => dirs.extend(values),
+                "Inherits" => parents.extend(values),
+                _ => {}
             }
         }
     }
