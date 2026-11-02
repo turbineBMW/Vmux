@@ -1,9 +1,11 @@
 //! Which coding agent is in the foreground of a terminal, and what it is
-//! doing. Three signals: the foreground command vmux-relay reports (which
-//! agent, if any), the terminal's OSC window title (busy, or waiting on the
-//! user) and the bottom of the live screen, for what an agent's title
-//! doesn't say (an approval or question dialog, or for agents that leave
-//! the title alone, being busy at all).
+//! doing. The foreground command vmux-relay reports says which agent, if
+//! any. What it is doing comes from the state it reports itself through the
+//! Program Status Protocol (OSC 7501) when it does, as pi does; otherwise
+//! from the terminal's OSC window title (busy, or waiting on the user) and
+//! the bottom of the live screen, for what an agent's title doesn't say (an
+//! approval or question dialog, or for agents that leave the title alone,
+//! being busy at all).
 
 /// What a detected agent is doing right now, least urgent first: the derived
 /// order is what [`aggregate`] ranks by.
@@ -95,6 +97,16 @@ const RULES: &[Rule] = &[
         screen_working: Some(opencode_screen_working),
     },
     Rule {
+        // Pi reports its state over OSC 7501 (see [`detect_full`]); nothing
+        // to read from its title or screen.
+        commands: &["pi"],
+        label: "Pi",
+        working: never,
+        needs_input: never,
+        screen_needs_input: None,
+        screen_working: None,
+    },
+    Rule {
         commands: &["copilot"],
         label: "Copilot",
         working: never,
@@ -126,7 +138,25 @@ pub fn detect_with_screen(
     title: &str,
     screen: impl FnOnce() -> String,
 ) -> Option<Detected> {
+    detect_full(command, title, "", screen)
+}
+
+/// [`detect_with_screen`], taking first the state the program in front
+/// reported over the Program Status Protocol (`status`, empty for none).
+/// The agent's own word beats anything read off its title or screen.
+pub fn detect_full(
+    command: &str,
+    title: &str,
+    status: &str,
+    screen: impl FnOnce() -> String,
+) -> Option<Detected> {
     let rule = rule_for(command)?;
+    if let Some(activity) = status_activity(status) {
+        return Some(Detected {
+            agent: rule.label,
+            activity,
+        });
+    }
     // A busy title wins: the agents that report it there stop their spinner
     // while a dialog waits on the user, so a spinning title means none is up.
     let activity = if (rule.working)(title) {
@@ -151,6 +181,18 @@ pub fn detect_with_screen(
         agent: rule.label,
         activity,
     })
+}
+
+/// The activity a Program Status state means. `done` and `error` are both a
+/// stopped agent, which shows as finished when the user hasn't seen it stop.
+/// `None` for no (or an unknown) state.
+pub fn status_activity(state: &str) -> Option<Activity> {
+    match state {
+        "working" => Some(Activity::Working),
+        "blocked" => Some(Activity::NeedsInput),
+        "idle" | "done" | "error" => Some(Activity::Idle),
+        _ => None,
+    }
 }
 
 /// When a front-end should re-read an agent's screen as its output changes.
@@ -676,5 +718,25 @@ Do you want to proceed?
         assert_eq!(task_title("✳ Claude Code"), "Claude Code");
         assert_eq!(task_title("codex — Vmux"), "codex — Vmux");
         assert_eq!(task_title(""), "");
+    }
+
+    #[test]
+    fn pi_follows_its_program_status() {
+        let on = |status| detect_full("pi", "π - Vmux", status, || unreachable!());
+        assert_eq!(on("").unwrap().agent, "Pi");
+        assert_eq!(on("").unwrap().activity, Activity::Idle);
+        assert_eq!(on("working").unwrap().activity, Activity::Working);
+        assert_eq!(on("blocked").unwrap().activity, Activity::NeedsInput);
+        assert_eq!(on("done").unwrap().activity, Activity::Idle);
+        assert_eq!(on("error").unwrap().activity, Activity::Idle);
+        assert_eq!(screen_use("pi"), ScreenUse::Never);
+    }
+
+    #[test]
+    fn program_status_beats_title_and_screen() {
+        let d = detect_full("claude", "⠋ Working", "blocked", || unreachable!());
+        assert_eq!(d.unwrap().activity, Activity::NeedsInput);
+        // No agent in front: a status alone doesn't make one.
+        assert_eq!(detect_full("brew", "", "working", String::new), None);
     }
 }
