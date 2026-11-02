@@ -54,6 +54,9 @@ pub fn install_fgproc_termprop() {
     install_termprop(crate::osc_scan::FGPROC_TERMPROP_NAME, 0);
     // The remote session's argv (tab host label): same lifetime rules.
     install_termprop(crate::remote::REMOTE_TERMPROP_NAME, 0);
+    // The foreground program's reported state (agent detection): read on
+    // demand, like the command name.
+    install_termprop(crate::osc_scan::STATUS_TERMPROP_NAME, 0);
 }
 
 /// Register the termprop agent session hooks report over (see

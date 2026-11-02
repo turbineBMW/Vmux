@@ -1,10 +1,12 @@
-//! Streaming scanner for desktop-notification OSC sequences.
+//! Streaming scanner for desktop-notification and program-status OSC
+//! sequences.
 //!
 //! libvte parses escape sequences internally and silently drops the
-//! notification OSCs (9 / 777 / kitty 99), so vmux-relay watches the raw
-//! child→terminal byte stream with this scanner — without modifying it —
-//! and re-emits each notification as a vte termprop OSC (666) that vmux
-//! receives through the termprop-changed signal.
+//! notification OSCs (9 / 777 / kitty 99) and the Program Status Protocol
+//! (OSC 7501), so vmux-relay watches the raw child→terminal byte stream with
+//! this scanner — without modifying it — and re-emits what it finds as vte
+//! termprop OSCs (666) that vmux receives through the termprop-changed
+//! signal.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +19,17 @@ pub const TERMPROP_NAME: &str = "vte.ext.vmux.notify";
 /// for the tab title when no program set an explicit OSC window title.
 pub const FGPROC_TERMPROP_NAME: &str = "vte.ext.vmux.fgproc";
 
+/// The termprop carrying the foreground program's state from the Program
+/// Status Protocol (OSC 7501, <https://www.superlogical.com/rex/docs/build/program-status>):
+/// one of `idle`, `working`, `done`, `blocked` or `error`, or empty when no
+/// state is reported (cleared, or the shell is back in front). Pi reports
+/// this way.
+pub const STATUS_TERMPROP_NAME: &str = "vte.ext.vmux.status";
+
+/// What a terminal that speaks the Program Status Protocol answers its
+/// feature query (`OSC 7501 ; ? ST`) with.
+pub const STATUS_QUERY_REPLY: &[u8] = b"\x1b]7501;?\x1b\\";
+
 /// OSC payloads beyond this are dropped (passthrough is unaffected).
 const PAYLOAD_CAP: usize = 8192;
 const TITLE_MAX_CHARS: usize = 128;
@@ -24,6 +37,18 @@ const BODY_MAX_CHARS: usize = 1024;
 /// Kitty multi-part accumulation: ids tracked at once / bytes per field.
 const KITTY_MAX_IDS: usize = 4;
 const KITTY_FIELD_CAP: usize = 8192;
+
+/// One sequence the scanner found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Found {
+    Notify(Notification),
+    /// A Program Status report for the root record: its state, or `""` for
+    /// `state=clear`.
+    Status(&'static str),
+    /// The Program Status feature query, which wants [`STATUS_QUERY_REPLY`]
+    /// written back to the program.
+    StatusQuery,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
@@ -121,7 +146,7 @@ enum State {
         num: u32,
         digits: u8,
     },
-    /// Collecting the payload of an OSC 9/777/99 (code in `Scanner::code`).
+    /// Collecting the payload of an OSC 9/777/99/7501 (code in `Scanner::code`).
     OscPayload,
     OscPayloadEsc,
     /// Inside an OSC we don't care about; waiting for its terminator.
@@ -160,11 +185,11 @@ impl Scanner {
         }
     }
 
-    /// Scan one chunk of the stream. For every notification that completes
-    /// inside it, `emit` is called with the offset just past the sequence's
-    /// terminator (where an injection belongs) and the parsed notification.
+    /// Scan one chunk of the stream. For every sequence of interest that
+    /// completes inside it, `emit` is called with the offset just past the
+    /// sequence's terminator (where an injection belongs) and what was found.
     /// Offsets are strictly increasing. The chunk itself is never modified.
-    pub fn scan(&mut self, chunk: &[u8], emit: &mut dyn FnMut(usize, Notification)) {
+    pub fn scan(&mut self, chunk: &[u8], emit: &mut dyn FnMut(usize, Found)) {
         use State::*;
         for (i, &b) in chunk.iter().enumerate() {
             self.state = match std::mem::replace(&mut self.state, Ground) {
@@ -182,7 +207,7 @@ impl Scanner {
                         num: num * 10 + u32::from(b - b'0'),
                         digits: digits + 1,
                     },
-                    b';' if matches!(num, 9 | 99 | 777) => {
+                    b';' if matches!(num, 9 | 99 | 777 | 7501) => {
                         self.code = num;
                         self.payload.clear();
                         self.overflow = false;
@@ -237,9 +262,15 @@ impl Scanner {
         matches!(self.state, State::Ground)
     }
 
-    fn finish(&mut self, end: usize, emit: &mut dyn FnMut(usize, Notification)) {
+    fn finish(&mut self, end: usize, emit: &mut dyn FnMut(usize, Found)) {
         let payload = std::mem::take(&mut self.payload);
         if std::mem::take(&mut self.overflow) {
+            return;
+        }
+        if self.code == 7501 {
+            if let Some(found) = parse_osc7501(&payload) {
+                emit(end, found);
+            }
             return;
         }
         let n = match self.code {
@@ -251,7 +282,7 @@ impl Scanner {
         if let Some(n) = n
             && !(n.title.is_empty() && n.body.is_empty())
         {
-            emit(end, n);
+            emit(end, Found::Notify(n));
         }
     }
 
@@ -357,6 +388,37 @@ fn parse_osc777(payload: &[u8]) -> Option<Notification> {
     })
 }
 
+/// `OSC 7501 ; pairs` — a Program Status report, or `OSC 7501 ; ?`, the
+/// feature query. Only the root record's state matters to vmux: reports for
+/// a sub-record (`id=…`) and unknown states are ignored, as the protocol
+/// asks of a terminal that doesn't understand them.
+fn parse_osc7501(payload: &[u8]) -> Option<Found> {
+    if payload.first() == Some(&b'?') {
+        return Some(Found::StatusQuery);
+    }
+    let mut state = None;
+    for kv in payload.split(|&b| b == b':') {
+        let Some(eq) = kv.iter().position(|&b| b == b'=') else {
+            continue;
+        };
+        match &kv[..eq] {
+            b"state" => state = Some(&kv[eq + 1..]),
+            b"id" if eq + 1 < kv.len() => return None,
+            _ => {}
+        }
+    }
+    let state = match state? {
+        b"idle" => "idle",
+        b"working" => "working",
+        b"done" => "done",
+        b"blocked" => "blocked",
+        b"error" => "error",
+        b"clear" => "",
+        _ => return None,
+    };
+    Some(Found::Status(state))
+}
+
 /// UTF-8 (lossy) decode, drop control characters (bodies keep newlines),
 /// truncate to a character budget.
 fn clean(bytes: &[u8], max_chars: usize, keep_newlines: bool) -> String {
@@ -449,7 +511,11 @@ mod tests {
     fn collect(bytes: &[u8]) -> Vec<(usize, Notification)> {
         let mut s = Scanner::new();
         let mut got = Vec::new();
-        s.scan(bytes, &mut |off, n| got.push((off, n)));
+        s.scan(bytes, &mut |off, f| {
+            if let Found::Notify(n) = f {
+                got.push((off, n));
+            }
+        });
         got
     }
 
@@ -460,8 +526,13 @@ mod tests {
         for cut in 1..bytes.len() {
             let mut s = Scanner::new();
             let mut got = Vec::new();
-            s.scan(&bytes[..cut], &mut |_, n| got.push(n.clone()));
-            s.scan(&bytes[cut..], &mut |_, n| got.push(n.clone()));
+            let mut push = |_, f| {
+                if let Found::Notify(n) = f {
+                    got.push(n);
+                }
+            };
+            s.scan(&bytes[..cut], &mut push);
+            s.scan(&bytes[cut..], &mut push);
             assert_eq!(got, whole, "split at {cut} diverged");
         }
         whole
@@ -695,5 +766,57 @@ mod tests {
         assert_eq!((p.title.as_str(), p.body.as_str()), ("t", "b"));
         // Different seq values must yield different termprop values.
         assert_ne!(bytes, encode_termprop(&notif("t", "b"), 8));
+    }
+
+    /// Every Program Status event in `bytes`, checked to be the same however
+    /// the stream is split.
+    fn statuses(bytes: &[u8]) -> Vec<Found> {
+        let pick = |s: &mut Scanner, b: &[u8], got: &mut Vec<Found>| {
+            s.scan(b, &mut |_, f| {
+                if !matches!(f, Found::Notify(_)) {
+                    got.push(f);
+                }
+            })
+        };
+        let mut whole = Vec::new();
+        pick(&mut Scanner::new(), bytes, &mut whole);
+        for cut in 1..bytes.len() {
+            let mut s = Scanner::new();
+            let mut got = Vec::new();
+            pick(&mut s, &bytes[..cut], &mut got);
+            pick(&mut s, &bytes[cut..], &mut got);
+            assert_eq!(got, whole, "split at {cut} diverged");
+        }
+        whole
+    }
+
+    #[test]
+    fn osc7501_states_and_query() {
+        // What pi sends: the query (with DA1 after it), then reports.
+        assert_eq!(
+            statuses(b"\x1b]7501;?\x1b\\\x1b[c"),
+            vec![Found::StatusQuery]
+        );
+        assert_eq!(
+            statuses(b"\x1b]7501;state=working:app=pi:msg=bXkgc2Vzc2lvbg==\x1b\\"),
+            vec![Found::Status("working")]
+        );
+        assert_eq!(
+            statuses(b"\x1b]7501;state=blocked:app=pi:kind=permission\x07x"),
+            vec![Found::Status("blocked")]
+        );
+        assert_eq!(
+            statuses(b"\x1b]7501;state=done\x1b\\\x1b]7501;state=clear\x1b\\"),
+            vec![Found::Status("done"), Found::Status("")]
+        );
+    }
+
+    #[test]
+    fn osc7501_ignores_sub_records_and_unknown_states() {
+        assert!(statuses(b"\x1b]7501;state=working:id=us-east\x1b\\").is_empty());
+        assert!(statuses(b"\x1b]7501;state=paused:app=pi\x1b\\").is_empty());
+        assert!(statuses(b"\x1b]7501;app=pi\x1b\\").is_empty());
+        // A report isn't a notification.
+        assert!(collect(b"\x1b]7501;state=working\x1b\\").is_empty());
     }
 }
