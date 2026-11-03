@@ -1,6 +1,7 @@
 //! Coding-agent activity per terminal, read from the signals vmux already
 //! has: the foreground command vmux-relay reports for each terminal (which
-//! agent is in front, if any), the terminal's OSC window title (busy, or
+//! agent is in front, if any), the state the agent reports itself over the
+//! Program Status Protocol (pi), the terminal's OSC window title (busy, or
 //! waiting on the user) and, for agents that need it, the bottom of the live
 //! screen (an approval dialog). See [`vmux::agents`] for the rules.
 //!
@@ -128,9 +129,12 @@ pub fn entries_in(zone: &Zone) -> Vec<Entry> {
     terms.iter().filter_map(entry).collect()
 }
 
-/// What the agent in `term` is doing, from its command, title and screen.
+/// What the agent in `term` is doing, from its command, reported status,
+/// title and screen.
 fn detect(term: &vte::Terminal) -> Option<Detected> {
     let command = pane::fg_command(term)?;
+    let status = term.termprop_data(vmux::osc_scan::STATUS_TERMPROP_NAME);
+    let status = std::str::from_utf8(&status).unwrap_or_default();
     #[allow(deprecated)] // window_title: see pane::new_tab
     let title = term
         .window_title()
@@ -139,7 +143,7 @@ fn detect(term: &vte::Terminal) -> Option<Detected> {
     tracked(term)
         .screen_use
         .set(vmux::agents::screen_use(&command));
-    let d = vmux::agents::detect_with_screen(&command, &title, || {
+    let d = vmux::agents::detect_full(&command, &title, status, || {
         let screen = live_screen(term);
         if std::env::var_os("VMUX_DEBUG_AGENTS").is_some() {
             eprintln!("agent-screen: {command} {title:?}\n{screen}\n-- end screen");
@@ -147,7 +151,7 @@ fn detect(term: &vte::Terminal) -> Option<Detected> {
         screen
     });
     if std::env::var_os("VMUX_DEBUG_AGENTS").is_some() {
-        eprintln!("agent-detect: {command} {title:?} -> {d:?}");
+        eprintln!("agent-detect: {command} {title:?} {status:?} -> {d:?}");
     }
     d
 }

@@ -11,11 +11,18 @@
 //! command (tab titles, root/remote tab colors) and, for ssh and friends,
 //! that command's argv (the remote host shown on the tab).
 //!
+//! It also speaks the Program Status Protocol (OSC 7501) on vte's behalf:
+//! it answers a program's feature query, so programs like pi start
+//! reporting, and passes their state on as a termprop.
+//!
 //! Teardown relies on the kernel: when vte closes the outer master the
 //! relay (foreground process group of the outer pty) gets a default-action
 //! SIGHUP and dies, which closes the inner master and HUPs the shell.
 
-use crate::osc_scan::{Scanner, encode_fgproc_termprop, encode_termprop};
+use crate::osc_scan::{
+    Found, STATUS_QUERY_REPLY, STATUS_TERMPROP_NAME, Scanner, encode_fgproc_termprop,
+    encode_termprop, osc666_termprop,
+};
 use crate::remote::{encode_remote_termprop, is_remote_command};
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
@@ -313,6 +320,10 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
     let mut pending_fg: Option<(String, Option<u32>)> = None;
     let mut last_remote: Vec<u8> = Vec::new();
     let mut pending_remote: Option<Vec<u8>> = None;
+    // A program status is standing (vmux has a non-empty one): cleared when
+    // the shell is back in front, so it can't outlive the program that set
+    // it — a program that exits mid-run never says so.
+    let mut status_set = false;
     // A pgid change is not the only way the foreground command changes: a
     // wrapper script that ends in `exec` becomes a different program in the
     // same process group (~/.local/bin/claude is `#!/bin/bash` ... `exec mise
@@ -421,12 +432,37 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                         // the scanner reports (just past each terminator) —
                         // chunk boundaries are not sequence boundaries.
                         let mut injections: Vec<(usize, Vec<u8>)> = Vec::new();
-                        scanner.scan(&chunk[..n], &mut |off, notif| {
-                            if injections.len() < 16 {
+                        let mut query = false;
+                        scanner.scan(&chunk[..n], &mut |off, found| match found {
+                            Found::Notify(notif) if injections.len() < 16 => {
                                 seq += 1;
                                 injections.push((off, encode_termprop(&notif, seq)));
                             }
+                            Found::Notify(_) => {}
+                            Found::Status(state) if injections.len() < 16 => {
+                                status_set = !state.is_empty();
+                                injections.push((
+                                    off,
+                                    osc666_termprop(STATUS_TERMPROP_NAME, state.as_bytes()),
+                                ));
+                            }
+                            Found::Status(_) => {}
+                            Found::StatusQuery => query = true,
                         });
+                        // Answer the query ahead of anything vte sends back
+                        // for the same output (the DA1 the program asks right
+                        // after it), so the program sees support first.
+                        if query {
+                            if in_start > 0 {
+                                in_buf.copy_within(in_start..in_start + in_len, 0);
+                                in_start = 0;
+                            }
+                            let reply = STATUS_QUERY_REPLY;
+                            if in_len + reply.len() <= in_buf.len() {
+                                in_buf[in_len..in_len + reply.len()].copy_from_slice(reply);
+                                in_len += reply.len();
+                            }
+                        }
                         let mut prev = 0;
                         for (off, inj) in injections {
                             out.extend_from_slice(&chunk[prev..off]);
@@ -522,6 +558,12 @@ fn pump(master: i32, pipe_r: i32, child: libc::pid_t) -> i32 {
                     last_remote = remote;
                 }
                 if let Some((name, uid)) = pending_fg.take() {
+                    // Before the name, so vmux never pairs the shell (or the
+                    // next program) with the last one's state.
+                    if name.is_empty() && status_set {
+                        out.extend_from_slice(&osc666_termprop(STATUS_TERMPROP_NAME, b""));
+                        status_set = false;
+                    }
                     out.extend_from_slice(&encode_fgproc_termprop(&name, uid));
                     last_sent = Some((name, uid));
                 }

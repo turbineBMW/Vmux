@@ -46,8 +46,10 @@ handy for "I have an idea, start a project *now*".
 
 ![Agents in the sidebar](docs/media/agents.gif)
 
-Vmux recognizes **Claude Code, Codex, Gemini CLI, OpenCode and Copilot CLI** in
-any tab.
+Vmux recognizes **Claude Code, Codex, Gemini CLI, OpenCode, Copilot CLI and
+pi** in any tab. Pi reports its own state through the
+[Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status)
+(OSC 7501), which Vmux supports.
 
 - Tabs show a spinner while an agent works and a mark when it's waiting on you
   or finished while you were away. The zone's picture rings until you look.

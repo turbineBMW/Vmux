@@ -399,6 +399,20 @@ pub fn new_tab(
             );
         }
         {
+            // The program in front reporting its state (OSC 7501, via the
+            // relay): pi's working / waiting / finished.
+            let app = app.clone();
+            let zw = Rc::downgrade(zone);
+            t.connect_termprop_changed(
+                Some(vmux::osc_scan::STATUS_TERMPROP_NAME),
+                move |term, _name| {
+                    if let Some(zone) = zw.upgrade() {
+                        agent::refresh_terminal(&app, &zone, term);
+                    }
+                },
+            );
+        }
+        {
             // An agent's session hook reporting its session id. Ephemeral:
             // copy the value out, act outside vte's handler.
             let app = app.clone();
