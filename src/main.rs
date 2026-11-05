@@ -37,11 +37,11 @@ const CSS: &str = "
     background-color: var(--vmux-agent-color);
 }
 .agent-dot.attention { background-color: var(--vmux-agent-attention-color); }
-.agent-dot.working { animation: vmux-agent-pulse 1.1s ease-in-out infinite alternate; }
-@keyframes vmux-agent-pulse {
-    from { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--vmux-agent-color) 60%, transparent); }
-    to   { opacity: 0.45; box-shadow: 0 0 0 5px transparent; }
-}
+/* Working dots blink: agent.rs toggles .dim on a slow timer. No animation or
+   transition here: either would redraw the window every frame (120 Hz) for as
+   long as an agent works. */
+.agent-dot { transition: none; }
+.agent-dot.working.dim { opacity: 0.45; }
 .agent-badge {
     min-width: 10px;
     min-height: 10px;
