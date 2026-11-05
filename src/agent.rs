@@ -417,9 +417,12 @@ fn apply_tab(term: &vte::Terminal) {
     };
     let e = entry(term);
     let status = e.as_ref().map(|e| e.status);
-    page.set_loading(status == Some(Status::Working));
+    // A static icon, not adw's loading spinner: the spinner animates at the
+    // display's refresh rate for as long as the agent works.
+    page.set_loading(false);
     page.set_needs_attention(status.is_some_and(Status::wants_attention));
     let icon = match status {
+        Some(Status::Working) => Some("content-loading-symbolic"),
         Some(Status::NeedsInput) => Some("dialog-question-symbolic"),
         Some(Status::Done) => Some("object-select-symbolic"),
         _ => None,
@@ -450,7 +453,7 @@ pub fn wants_attention(r: Rollup) -> bool {
 /// Put a zone summary's classes on a badge/dot widget: pulsing while any
 /// agent works, red while one waits on the user.
 pub fn style_badge(badge: &impl IsA<gtk::Widget>, r: Rollup) {
-    set_class(badge, "working", r.working);
+    set_working(badge, r.working);
     set_class(
         badge,
         "attention",
@@ -460,7 +463,7 @@ pub fn style_badge(badge: &impl IsA<gtk::Widget>, r: Rollup) {
 
 /// Put one agent's status classes on a dot widget.
 pub fn style_dot(dot: &impl IsA<gtk::Widget>, status: Status) {
-    set_class(dot, "working", status == Status::Working);
+    set_working(dot, status == Status::Working);
     set_class(dot, "attention", status == Status::NeedsInput);
     set_class(dot, "done", status == Status::Done);
 }
@@ -472,6 +475,60 @@ pub fn describe(agent: &str, status: Status) -> String {
         Status::Done => format!("{agent} finished"),
         Status::Idle => format!("{agent} is open"),
     }
+}
+
+/// How often a working dot flips between full and dim.
+const BLINK_MS: u64 = 700;
+
+thread_local! {
+    /// Dots that have been marked working; pruned as they stop or go away.
+    static BLINKING: RefCell<Vec<glib::WeakRef<gtk::Widget>>> = RefCell::default();
+    /// The shared blink timer, running only while some dot is working.
+    static BLINK_TIMER: Cell<bool> = const { Cell::new(false) };
+    static BLINK_DIM: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Mark a dot working or not. Working dots blink: one shared timer toggles
+/// `dim` on them every BLINK_MS. A CSS animation would do the same with no
+/// code, but an infinite one makes GTK redraw the window at the display's
+/// refresh rate (120 Hz) for as long as any agent works, even with vmux
+/// unfocused: ~20% of a core plus the compositor, and the panel never
+/// reaches self-refresh. The timer costs about 1.4 redraws a second.
+fn set_working(w: &impl IsA<gtk::Widget>, on: bool) {
+    let w = w.upcast_ref::<gtk::Widget>();
+    set_class(w, "working", on);
+    if !on {
+        w.remove_css_class("dim");
+        return;
+    }
+    BLINKING.with(|b| {
+        let mut b = b.borrow_mut();
+        if !b.iter().any(|x| x.upgrade().as_ref() == Some(w)) {
+            b.push(w.downgrade());
+        }
+    });
+    if BLINK_TIMER.replace(true) {
+        return;
+    }
+    glib::timeout_add_local(std::time::Duration::from_millis(BLINK_MS), || {
+        let dim = !BLINK_DIM.get();
+        BLINK_DIM.set(dim);
+        let any = BLINKING.with(|b| {
+            let mut b = b.borrow_mut();
+            b.retain(|x| x.upgrade().is_some_and(|w| w.has_css_class("working")));
+            for w in b.iter().filter_map(|x| x.upgrade()) {
+                set_class(&w, "dim", dim);
+            }
+            !b.is_empty()
+        });
+        if any {
+            glib::ControlFlow::Continue
+        } else {
+            BLINK_TIMER.set(false);
+            BLINK_DIM.set(false);
+            glib::ControlFlow::Break
+        }
+    });
 }
 
 fn set_class(w: &impl IsA<gtk::Widget>, class: &str, on: bool) {

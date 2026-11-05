@@ -394,6 +394,10 @@ pub fn new_tab(
                     }
                     if let Some(zone) = zw.upgrade() {
                         agent::refresh_terminal(&app, &zone, term);
+                        // A command started or finished: the zone's git
+                        // summary may have changed, and zones out of view
+                        // are not polled.
+                        App::refresh_zone_git(&zone);
                     }
                 },
             );

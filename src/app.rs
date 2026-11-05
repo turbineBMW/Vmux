@@ -610,6 +610,8 @@ impl App {
             );
         }
         self.stack.set_visible_child_name(&zone.stack_name());
+        // Only the visible zone is polled; catch up on the one coming into view.
+        Self::refresh_zone_git(&zone);
         zone.attention.set_visible(false);
         agent::mark_visible_seen(self, &zone);
         self.withdraw_zone_notification(&zone);
@@ -1232,9 +1234,12 @@ impl App {
     // ----- git status -------------------------------------------------------
 
     /// Keep each zone's secondary line in sync with its directory's git status:
-    /// refresh now, on a 3s timer while the window is focused, and whenever the
-    /// window regains focus. Gating on focus avoids churn while in the
-    /// background; the focus-in handler makes stats fresh the moment you return.
+    /// all zones now and whenever the window regains focus; the zone in view
+    /// on a 3s timer while the window is focused; a zone when it is selected
+    /// and when a command starts or finishes in one of its terminals (see
+    /// pane.rs). The timer covers only the visible zone: refreshing all of
+    /// them every 3s was up to 3 git processes per zone (~60 for 24 zones,
+    /// ~20% of a core on a Panther Lake laptop) for as long as vmux had focus.
     pub fn start_git_polling(self: &Rc<Self>) {
         self.refresh_all_git();
         let weak = Rc::downgrade(self);
@@ -1242,8 +1247,10 @@ impl App {
             let Some(app) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            if app.window.is_active() {
-                app.refresh_all_git();
+            if app.window.is_active()
+                && let Some(zone) = app.active_zone()
+            {
+                Self::refresh_zone_git(&zone);
             }
             glib::ControlFlow::Continue
         });
@@ -1265,7 +1272,7 @@ impl App {
 
     /// Recompute one zone's git summary off the main loop and update its
     /// secondary label, falling back to the directory basename outside a repo.
-    fn refresh_zone_git(zone: &Rc<Zone>) {
+    pub fn refresh_zone_git(zone: &Rc<Zone>) {
         let cwd = zone.cwd.clone();
         let path_box = zone.path_box.clone();
         let cache = zone.git_text.clone();

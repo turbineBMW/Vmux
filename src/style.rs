@@ -164,7 +164,9 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
  *   .zone-path   - the per-zone secondary line, e.g.  .zone-path { font-size: 0.9em; }
  *   .zone-number - the position chip before the zone name
  *   .zone-avatar - the picture/initials chip
- *   .agent-dot   - the coding-agent badge on the chip (.working / .attention),
+ *   .agent-dot   - the coding-agent badge on the chip (.working / .attention;
+ *                  a working dot blinks by toggling .dim, so animations here
+ *                  redraw the window every frame while an agent works),
  *                  colored by --vmux-agent-color / --vmux-agent-attention-color
  *   .agent-chip.agent-attention - the ring around a chip whose agent stopped
  *   .zone-list-header - the header that folds the zone list (.zone-count)
