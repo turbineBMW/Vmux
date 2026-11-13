@@ -183,7 +183,8 @@ Preferences (gear icon or `Ctrl+,`) has three pages:
 | `~/.config/vmux/themes/*.css` | Named theme snapshots |
 
 For a see-through terminal, give `vmux_terminal_background` an `rgba()` with
-alpha < 1.
+alpha < 1. For a see-through sidebar, set `--vmux-sidebar-opacity` (a number from 0 to 1, not a percentage)
+in a `:root` rule. It fades only the sidebar's background, not its text.
 
 <details>
 <summary>Omarchy theme details</summary>
@@ -193,8 +194,15 @@ with the same fallbacks as `omarchy-theme-color`, so themes match Alacritty
 and Ghostty exactly. Legacy `color0`..`color15` themes work too. It's layered
 *over* `style.css`, so turning it off restores your own colours. While it's
 on, font, opacity and the alpha of `vmux_terminal_background` still apply.
-A theme can take full control with a `vmux.css` (same tokens as `style.css`)
-in its directory, or generated from `~/.config/omarchy/themed/vmux.css.tpl`.
+A theme can add its own `vmux.css` (same tokens as `style.css`) in its
+directory, or have one generated from `~/.config/omarchy/themed/vmux.css.tpl`.
+It is layered over the derived palette, so it only needs the tokens it
+changes. For example, a translucent sidebar for every theme:
+
+```css
+/* ~/.config/omarchy/themed/vmux.css.tpl */
+:root { --vmux-sidebar-opacity: 0.8; }
+```
 
 </details>
 

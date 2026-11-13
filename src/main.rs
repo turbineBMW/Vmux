@@ -104,6 +104,18 @@ const CSS: &str = "
     border-radius: 6px;
     padding: 4px 24px;
 }
+/* Sidebar opacity: --vmux-sidebar-opacity (0 to 1) fades the sidebar's
+   background but never its text. Set it in style.css or in an Omarchy
+   theme's vmux.css. Below 1, App::sync_window_transparency also clears the
+   window background so the desktop shows through. Scoped to the split view
+   so nested panes (which Adwaita keeps transparent) are left alone. */
+:root { --vmux-sidebar-opacity: 1; }
+overlay-split-view > .sidebar-pane {
+    background-color: alpha(var(--sidebar-bg-color), var(--vmux-sidebar-opacity));
+}
+overlay-split-view > .sidebar-pane:backdrop {
+    background-color: alpha(var(--sidebar-backdrop-color), var(--vmux-sidebar-opacity));
+}
 window.vmux-transparent { background-color: transparent; }
 /* The flat headerbar relies on the window background removed above. Paint the
    replacement on the .top-bar revealer, NOT on the headerbar itself: GTK dims
