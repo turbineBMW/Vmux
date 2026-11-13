@@ -312,9 +312,9 @@ const HEADER_SIDEBARS: &[ColorField] = &[
         "#242424"
     ),
     custom!(
-        "--headerbar-border-color",
-        "Header border",
-        "Divider along the edge of the header bar.",
+        "--vmux-pane-border-color",
+        "Terminal pane border",
+        "Edge under each pane's tabs and the dividers between split panes.",
         "#3d3d3d"
     ),
     custom!(

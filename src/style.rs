@@ -104,7 +104,7 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
   --headerbar-bg-color: #303030;
   --headerbar-fg-color: #ffffff;
   --headerbar-backdrop-color: #242424;
-  --headerbar-border-color: #3d3d3d;
+  --vmux-pane-border-color: #3d3d3d;
   --sidebar-bg-color: #242424;
   --sidebar-fg-color: #ffffff;
   --sidebar-backdrop-color: #202020;

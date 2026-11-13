@@ -198,6 +198,11 @@ own alpha, and leaves tab labels and terminal text solid.
 :root { --vmux-sidebar-opacity: 0.9; --vmux-terminal-opacity: 0.85; }
 ```
 
+`--vmux-pane-border-color` (*Terminal pane border* in Preferences) colors
+every border inside the terminal area: the edge under each pane's tabs and
+the dividers between split panes. The sidebar's edge keeps
+`--sidebar-border-color`.
+
 <details>
 <summary>Omarchy theme details</summary>
 

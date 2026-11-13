@@ -7,6 +7,9 @@ use vte4 as vte;
 /// CSS class marking a pane root widget (the tabbed container that splits
 /// operate on). Used to find panes while walking the widget tree.
 pub const PANE_CLASS: &str = "vmux-pane";
+/// On every split's Paned, so the pane-border rules in main.rs reach its
+/// divider and no other Paned.
+pub const SPLIT_CLASS: &str = "vmux-split";
 
 /// Typed descent — never rely on first_child() order for known containers.
 pub fn first_terminal_in(w: &gtk::Widget) -> Option<vte::Terminal> {
@@ -266,6 +269,7 @@ pub fn position_when_allocated(paned: &gtk::Paned, ratio: f64) {
 
 pub fn new_split_paned(orientation: gtk::Orientation, ratio: f64) -> gtk::Paned {
     let paned = gtk::Paned::new(orientation);
+    paned.add_css_class(SPLIT_CLASS);
     paned.set_hexpand(true);
     paned.set_vexpand(true);
     paned.set_shrink_start_child(false);
