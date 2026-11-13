@@ -285,7 +285,9 @@ fn valid_theme_name(name: &str) -> std::io::Result<String> {
     Ok(name.to_string())
 }
 
-fn write_css(path: &Path, css: &str) -> std::io::Result<()> {
+/// Write `css` to `path` atomically (through a sibling temp file), creating
+/// the directory if needed, so a file monitor never sees half a stylesheet.
+pub fn write_css(path: &Path, css: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -483,12 +485,18 @@ pub fn value(declaration: Declaration) -> Option<String> {
 /// hand-editable stylesheet. The write is atomic so the live file monitor
 /// never observes a partially written CSS document.
 pub fn set_value(declaration: Declaration, value: &str) -> std::io::Result<()> {
-    if value.contains(['\n', '\r', ';', '{', '}']) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "invalid CSS declaration value",
-        ));
-    }
+    check_value(value)?;
+    update(|css| replace_value(css, declaration, value))
+}
+
+/// Set an opacity token (see [`opacity_in`]) in style.css.
+pub fn set_opacity(name: &'static str, opacity: f32) -> std::io::Result<()> {
+    update(|css| with_opacity(css, name, opacity))
+}
+
+/// Rewrite style.css through `edit`, seeding it from the template first if
+/// it does not exist yet.
+fn update(edit: impl FnOnce(&str) -> String) -> std::io::Result<()> {
     let path = path();
     let css = match fs::read_to_string(&path) {
         Ok(css) => css,
@@ -498,17 +506,46 @@ pub fn set_value(declaration: Declaration, value: &str) -> std::io::Result<()> {
         }
         Err(e) => return Err(e),
     };
-    let updated = replace_value(&css, declaration, value);
-    let tmp = path.with_extension("css.tmp");
-    fs::write(&tmp, updated)?;
-    fs::rename(tmp, path)
+    write_css(&path, &edit(&css))
 }
 
-fn value_in(css: &str, declaration: Declaration) -> Option<String> {
+/// Refuse a value that would end its declaration or rule early.
+pub fn check_value(value: &str) -> std::io::Result<()> {
+    if value.contains(['\n', '\r', ';', '{', '}']) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid CSS declaration value",
+        ));
+    }
+    Ok(())
+}
+
+/// The value `css` gives one GUI-managed declaration, the last one if it
+/// repeats. Commented examples are ignored.
+pub fn value_in(css: &str, declaration: Declaration) -> Option<String> {
     declaration_range(css, declaration).map(|range| css[range].trim().to_string())
 }
 
-fn replace_value(css: &str, declaration: Declaration, value: &str) -> String {
+/// `css` with an opacity token set to `opacity`. The token is usually set by
+/// hand, often in a one-line `:root { ... }` rule the declaration scanner
+/// does not edit, so when the edited declaration is not the one in force a
+/// new rule is appended to win the cascade.
+pub fn with_opacity(css: &str, name: &'static str, opacity: f32) -> String {
+    let value = format!("{:.2}", opacity.clamp(0.0, 1.0));
+    let declaration = Declaration::CustomProperty(name);
+    let mut updated = replace_value(css, declaration, &value);
+    if opacity_in(&updated, name).map(|o| format!("{o:.2}")) != Some(value.clone()) {
+        updated = format!(
+            "{}\n\n:root {{\n  {name}: {value};\n}}\n",
+            updated.trim_end()
+        );
+    }
+    updated
+}
+
+/// `css` with one declaration set to `value`: the declaration in force is
+/// rewritten in place, or a new one is appended.
+pub fn replace_value(css: &str, declaration: Declaration, value: &str) -> String {
     if let Some(range) = declaration_range(css, declaration) {
         let mut updated = css.to_string();
         updated.replace_range(range, value);
@@ -566,9 +603,14 @@ fn declaration_range(css: &str, declaration: Declaration) -> Option<std::ops::Ra
 
         if let Some(selector) = target_selector {
             if !in_target {
+                // A rule closed on its own line (`:root { --a: b; }`) is not
+                // entered: its declarations aren't on lines of their own, and
+                // entering it would leave the scan inside it until some
+                // later rule's closing brace.
                 if trimmed
                     .strip_prefix(selector)
-                    .is_some_and(|rest| rest.trim_start().starts_with('{'))
+                    .and_then(|rest| rest.trim_start().strip_prefix('{'))
+                    .is_some_and(|body| !body.contains('}'))
                 {
                     in_target = true;
                 }
@@ -625,6 +667,11 @@ fn declaration_range(css: &str, declaration: Declaration) -> Option<std::ops::Ra
 /// tokens, this one is meant to be set by hand or by an Omarchy theme's
 /// `vmux.css`, so it may sit in any rule and on one line with others.
 pub const SIDEBAR_OPACITY: &str = "--vmux-sidebar-opacity";
+
+/// How opaque the terminal area is: the pane tab bars and the terminals
+/// themselves. Read the same way as [`SIDEBAR_OPACITY`]. It multiplies the
+/// alpha of `vmux_terminal_background` rather than replacing it.
+pub const TERMINAL_OPACITY: &str = "--vmux-terminal-opacity";
 
 /// The last value `name` is given anywhere in `css`, as an opacity clamped
 /// to 0..=1. Comments are skipped; selectors are not checked, since the
@@ -703,6 +750,47 @@ mod tests {
         );
         assert_eq!(
             opacity_in("/* --vmux-sidebar-opacity: 0.5", SIDEBAR_OPACITY),
+            None
+        );
+    }
+
+    /// A hand-written one-line rule is not entered, and doesn't capture the
+    /// declarations of the rules after it.
+    #[test]
+    fn a_one_line_root_rule_does_not_swallow_later_rules() {
+        let css = ":root { --vmux-sidebar-opacity: 0.8; }\n\
+                   .other {\n  --accent-color: #ff0000;\n}\n";
+        assert_eq!(
+            value_in(css, Declaration::CustomProperty("--accent-color")),
+            None
+        );
+    }
+
+    /// Setting an opacity lands on the declaration in force, or appends one
+    /// that wins over a one-line rule the scanner leaves alone.
+    #[test]
+    fn opacity_is_set_where_it_takes_effect() {
+        let block = ":root {\n  --vmux-terminal-opacity: 0.50;\n}\n";
+        let updated = with_opacity(block, TERMINAL_OPACITY, 0.8);
+        assert_eq!(updated, ":root {\n  --vmux-terminal-opacity: 0.80;\n}\n");
+
+        let one_line = ":root { --vmux-terminal-opacity: 0.5; }\n";
+        let updated = with_opacity(one_line, TERMINAL_OPACITY, 0.8);
+        assert_eq!(opacity_in(&updated, TERMINAL_OPACITY), Some(0.8));
+
+        let updated = with_opacity("", SIDEBAR_OPACITY, 0.9);
+        assert_eq!(opacity_in(&updated, SIDEBAR_OPACITY), Some(0.9));
+        assert_eq!(opacity_in(&updated, TERMINAL_OPACITY), None);
+    }
+
+    /// Each opacity token is read on its own, even when both sit in one rule.
+    #[test]
+    fn terminal_and_sidebar_opacity_are_read_apart() {
+        let css = ":root { --vmux-sidebar-opacity: 0.9; --vmux-terminal-opacity: 0.7; }";
+        assert_eq!(opacity_in(css, SIDEBAR_OPACITY), Some(0.9));
+        assert_eq!(opacity_in(css, TERMINAL_OPACITY), Some(0.7));
+        assert_eq!(
+            opacity_in(":root { --vmux-sidebar-opacity: 0.9; }", TERMINAL_OPACITY),
             None
         );
     }

@@ -38,6 +38,8 @@ fn workspace_switch_restores_input_focus() {
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
         sidebar_opacity: Cell::new(1.0),
+        terminal_opacity: Cell::new(1.0),
+        style_listeners: RefCell::default(),
         drag_emptied: RefCell::new(Vec::new()),
         resumed_sessions: RefCell::default(),
     });

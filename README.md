@@ -172,8 +172,12 @@ Preferences (gear icon or `Ctrl+,`) has three pages:
   after sending the desktop notification, including on desktops whose
   notification service ignores sound hints. Omarchy and GNOME do-not-disturb
   settings are respected.
-- **Appearance** covers Omarchy theme following, saved themes, and labelled
-  controls for font, terminal/ANSI colours, chrome, indicators and git colours.
+- **Appearance** covers Omarchy theme following, saved themes, sidebar and
+  terminal opacity, and labelled controls for font, terminal/ANSI colours,
+  chrome, indicators and git colours. While following an Omarchy theme the
+  colour controls show that theme's colours, and edits are saved to its own
+  `vmux.css` (`~/.config/omarchy/themes/<theme>/vmux.css`), so they survive
+  later theme switches.
 - **Keybindings** lets you rebind every action.
 
 | Path | Contents |
@@ -182,9 +186,17 @@ Preferences (gear icon or `Ctrl+,`) has three pages:
 | `~/.config/vmux/style.css` | Live stylesheet, with every token documented inline |
 | `~/.config/vmux/themes/*.css` | Named theme snapshots |
 
-For a see-through terminal, give `vmux_terminal_background` an `rgba()` with
+For a see-through sidebar or terminal area, use the sliders under
+*Appearance → Transparency*, or set the tokens by hand. For a see-through terminal, give `vmux_terminal_background` an `rgba()` with
 alpha < 1. For a see-through sidebar, set `--vmux-sidebar-opacity` (a number from 0 to 1, not a percentage)
 in a `:root` rule. It fades only the sidebar's background, not its text.
+`--vmux-terminal-opacity` does the same for the terminal area: the pane tab
+bars and the terminals under them. It multiplies the terminal background's
+own alpha, and leaves tab labels and terminal text solid.
+
+```css
+:root { --vmux-sidebar-opacity: 0.9; --vmux-terminal-opacity: 0.85; }
+```
 
 <details>
 <summary>Omarchy theme details</summary>

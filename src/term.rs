@@ -1,6 +1,7 @@
 use crate::state::Config;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
+use std::cell::Cell;
 use std::rc::Rc;
 use vte4 as vte;
 use vte4::prelude::*;
@@ -422,6 +423,29 @@ fn enable_images(term: &vte::Terminal) {
     }
 }
 
+thread_local! {
+    /// `--vmux-terminal-opacity`, resolved by the front-end from its
+    /// stylesheets. VTE paints its own background from an explicit color, so
+    /// the CSS token can't reach it; [`apply_style`] folds it in instead.
+    static OPACITY: Cell<f32> = const { Cell::new(1.0) };
+}
+
+/// Set the terminal-area opacity every later [`apply_style`] call uses.
+/// Re-apply the style to existing terminals to pick it up.
+pub fn set_opacity(opacity: f32) {
+    OPACITY.set(opacity.clamp(0.0, 1.0));
+}
+
+/// The background VTE should paint: the stylesheet's color with its alpha
+/// scaled by the terminal-area opacity.
+fn faded(color: Option<gtk::gdk::RGBA>) -> Option<gtk::gdk::RGBA> {
+    let opacity = OPACITY.get();
+    color.map(|mut color| {
+        color.set_alpha(color.alpha() * opacity);
+        color
+    })
+}
+
 /// Apply the terminal appearance exposed by style.css. GTK resolves the font
 /// from the `.vmux-terminal` rule; the ANSI palette and cursor are GTK named
 /// colors because VTE requires its explicit color API for those values.
@@ -432,7 +456,7 @@ pub fn apply_style(term: &vte::Terminal) {
         term.set_font(Some(&font));
     }
     let foreground = context.lookup_color(crate::style::TERMINAL_FOREGROUND);
-    let background = context.lookup_color(crate::style::TERMINAL_BACKGROUND);
+    let background = faded(context.lookup_color(crate::style::TERMINAL_BACKGROUND));
     let palette: Option<Vec<gtk::gdk::RGBA>> = crate::style::TERMINAL_PALETTE
         .iter()
         .map(|name| context.lookup_color(name))

@@ -54,6 +54,75 @@ pub fn theme_name() -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// The user's own copy of the active theme, `~/.config/omarchy/themes/<name>`.
+/// `omarchy theme set` copies it over the stock theme of the same name (and a
+/// `vmux.css` there also beats a `vmux.css.tpl`), so an edit saved here
+/// survives every later switch. `None` when no theme is active or its name
+/// could escape the directory.
+pub fn user_theme_dir() -> Option<PathBuf> {
+    let name = theme_name()?;
+    if name.contains('/') || name.starts_with('.') {
+        return None;
+    }
+    Some(
+        glib::home_dir()
+            .join(".config")
+            .join("omarchy")
+            .join("themes")
+            .join(name),
+    )
+}
+
+/// Where Preferences saves its edits to the active theme's colors.
+pub fn user_theme_css() -> Option<PathBuf> {
+    user_theme_dir().map(|dir| dir.join("vmux.css"))
+}
+
+/// The active theme's own vmux.css as vmux reads it, without the palette
+/// derived from colors.toml.
+pub fn theme_css() -> Option<String> {
+    fs::read_to_string(theme_dir().join("vmux.css")).ok()
+}
+
+/// What a vmux.css that Preferences starts from scratch says about itself.
+const NEW_THEME_CSS: &str = "/* vmux colors for this Omarchy theme, saved from vmux Preferences.\n\
+ * Layered over the palette vmux derives from colors.toml: only what is\n\
+ * declared here changes. Delete this file to go back to that palette. */\n";
+
+/// Rewrite the active theme's vmux.css through `edit`, in the user's theme
+/// directory, then copy the result into the applied theme so it shows at
+/// once. A theme without its own file starts from what is applied now (a
+/// stock theme's vmux.css, or one rendered from a template) so nothing it
+/// set is lost. Returns the file written.
+pub fn update_theme_css(edit: impl FnOnce(&str) -> String) -> std::io::Result<PathBuf> {
+    let path = user_theme_css().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "no active Omarchy theme")
+    })?;
+    update_theme_css_in(&path, &theme_dir(), edit)?;
+    Ok(path)
+}
+
+fn update_theme_css_in(
+    path: &Path,
+    applied: &Path,
+    edit: impl FnOnce(&str) -> String,
+) -> std::io::Result<()> {
+    let css = match fs::read_to_string(path) {
+        Ok(css) => css,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            fs::read_to_string(applied.join("vmux.css"))
+                .unwrap_or_else(|_| NEW_THEME_CSS.to_string())
+        }
+        Err(e) => return Err(e),
+    };
+    let updated = edit(&css);
+    crate::style::write_css(path, &updated)?;
+    if applied.is_dir() {
+        crate::style::write_css(&applied.join("vmux.css"), &updated)?;
+    }
+    Ok(())
+}
+
 pub struct Theme {
     /// CSS ready for a `gtk::CssProvider`.
     pub css: String,
@@ -661,6 +730,39 @@ bright_red = "#db9f9c"
         let own = theme.css.find("--vmux-sidebar-opacity: 0.8;").unwrap();
         assert!(palette < own);
         assert!(!theme.light);
+    }
+
+    /// An edit from Preferences starts from the vmux.css the applied theme
+    /// has (a stock theme's, or one from a template), is saved in the user's
+    /// own theme directory, and is copied into the applied theme at once.
+    #[test]
+    fn a_theme_edit_starts_from_the_applied_file_and_lands_in_both() {
+        let root = tempfile::tempdir().unwrap();
+        let applied = root.path().join("current");
+        fs::create_dir_all(&applied).unwrap();
+        fs::write(
+            applied.join("vmux.css"),
+            "@define-color vmux_terminal_background #111111;\n@define-color vmux_terminal_foreground #eeeeee;\n",
+        )
+        .unwrap();
+        let user = root.path().join("themes").join("jade").join("vmux.css");
+        let set = |css: &str| {
+            crate::style::replace_value(
+                css,
+                crate::style::Declaration::NamedColor("vmux_terminal_background"),
+                "#222222",
+            )
+        };
+        update_theme_css_in(&user, &applied, set).unwrap();
+        let saved = fs::read_to_string(&user).unwrap();
+        assert!(saved.contains("vmux_terminal_background #222222;"));
+        assert!(saved.contains("vmux_terminal_foreground #eeeeee;"));
+        assert_eq!(fs::read_to_string(applied.join("vmux.css")).unwrap(), saved);
+
+        // Once the user's file exists it is the one edited, not the applied copy.
+        fs::write(applied.join("vmux.css"), "/* rebuilt */\n").unwrap();
+        update_theme_css_in(&user, &applied, |css| css.replace("#eeeeee", "#dddddd")).unwrap();
+        assert!(fs::read_to_string(&user).unwrap().contains("#dddddd"));
     }
 
     /// Transparency is the user's setting, not the theme's, so it survives.

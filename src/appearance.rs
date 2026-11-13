@@ -17,6 +17,10 @@ struct ColorField {
 
 struct AppearanceUi {
     syncing: Cell<bool>,
+    /// The CSS the color controls show: style.css, with the Omarchy theme
+    /// (its derived palette and its own vmux.css) after it while following
+    /// it, the same order the providers cascade in. Rebuilt on every refresh.
+    colors: RefCell<String>,
     theme_row: gtk::glib::WeakRef<adw::ComboRow>,
     themes: RefCell<Vec<style::Theme>>,
     refreshers: RefCell<Vec<Box<dyn Fn()>>>,
@@ -26,6 +30,7 @@ impl Default for AppearanceUi {
     fn default() -> Self {
         Self {
             syncing: Cell::new(false),
+            colors: RefCell::new(String::new()),
             theme_row: gtk::glib::WeakRef::new(),
             themes: RefCell::new(Vec::new()),
             refreshers: RefCell::new(Vec::new()),
@@ -40,7 +45,29 @@ impl AppearanceUi {
         self.syncing.set(was_syncing);
     }
 
-    fn refresh_controls(&self) {
+    /// Re-read what the color controls show from the files in force.
+    fn read_colors(&self, app: &App) {
+        let mut css = style::load();
+        if app.following_omarchy()
+            && let Some(theme) = omarchy::load(app.terminal_background_alpha())
+        {
+            css.push('\n');
+            css.push_str(&theme.css);
+        }
+        *self.colors.borrow_mut() = css;
+    }
+
+    /// The value in force for one color control.
+    fn color(&self, field: &ColorField) -> gtk::gdk::RGBA {
+        let value = style::value_in(&self.colors.borrow(), field.declaration)
+            .unwrap_or_else(|| field.fallback.to_string());
+        gtk::gdk::RGBA::parse(&value)
+            .or_else(|_| gtk::gdk::RGBA::parse(field.fallback))
+            .expect("appearance fallback colors are valid")
+    }
+
+    fn refresh_controls(&self, app: &App) {
+        self.read_colors(app);
         self.while_syncing(|| {
             for refresh in self.refreshers.borrow().iter() {
                 refresh();
@@ -540,13 +567,16 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
         .icon_name("applications-graphics-symbolic")
         .build();
     let ui = Rc::new(AppearanceUi::default());
+    ui.read_colors(app);
 
-    // Every color group below is dimmed while the Omarchy theme is driving
-    // them, so the page never offers a control that cannot take effect.
+    // While the Omarchy theme drives the colors, the color groups edit the
+    // theme's own vmux.css instead of style.css; they are dimmed only when
+    // there is no theme to save into.
     let color_groups: Rc<RefCell<Vec<adw::PreferencesGroup>>> = Rc::new(RefCell::new(Vec::new()));
-    add_omarchy_group(&page, app, &color_groups);
+    add_omarchy_group(&page, app, &ui);
     add_theme_group(&page, app, &ui);
     add_font_group(&page, app, &ui);
+    add_transparency_group(&page, app, &ui);
     color_groups.borrow_mut().push(add_color_group(
         &page,
         app,
@@ -613,11 +643,32 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
     ));
     add_opacity_group(&page, app, &ui);
     add_stylesheet_group(&page);
-    set_color_groups_sensitive(
-        &color_groups,
-        !(omarchy::detected() && app.config.borrow().follow_omarchy_theme),
-    );
-    ui.refresh_controls();
+    {
+        let app = Rc::downgrade(app);
+        ui.add_refresher(move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let editable = !app.following_omarchy() || omarchy::user_theme_css().is_some();
+            for group in color_groups.borrow().iter() {
+                group.set_sensitive(editable);
+            }
+        });
+    }
+    // A theme switch, a hand edit of style.css or a write from this page all
+    // end in a reload; show what it left in force.
+    {
+        let weak_ui = Rc::downgrade(&ui);
+        let weak_app = Rc::downgrade(app);
+        app.on_style_reloaded(move || {
+            let (Some(ui), Some(app)) = (weak_ui.upgrade(), weak_app.upgrade()) else {
+                return false;
+            };
+            ui.refresh_controls(&app);
+            true
+        });
+    }
+    ui.refresh_controls(app);
     if let Err(error) = ui.refresh_themes() {
         eprintln!("vmux: cannot list saved themes: {error}");
     }
@@ -626,14 +677,10 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
 
 /// Follow the desktop theme. Omarchy swaps `colors.toml` under
 /// `~/.local/state/omarchy/current/theme` on every theme change and vmux
-/// layers that palette over style.css, so this is the one appearance control
-/// that does not write to the stylesheet — flipping it off hands the colors
-/// straight back to the file.
-fn add_omarchy_group(
-    page: &adw::PreferencesPage,
-    app: &Rc<App>,
-    color_groups: &Rc<RefCell<Vec<adw::PreferencesGroup>>>,
-) {
+/// layers that palette over style.css. While it is on, the color controls
+/// show the theme's colors and save into the theme's own vmux.css; flipping
+/// it off hands them straight back to style.css.
+fn add_omarchy_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<AppearanceUi>) {
     let group = adw::PreferencesGroup::new();
     group.set_title("Desktop Theme");
     group.set_description(Some(
@@ -642,33 +689,56 @@ fn add_omarchy_group(
     let detected = omarchy::detected();
     let row = adw::SwitchRow::builder()
         .title("Follow Omarchy theme")
-        .subtitle(match (detected, omarchy::theme_name()) {
-            (true, Some(name)) => format!(
-                "Currently {name}. Font, opacity, and any rule that is not a color stay yours."
-            ),
-            (true, None) => "Font, opacity, and any rule that is not a color stay yours.".into(),
-            (false, _) => "No Omarchy theme found on this system.".into(),
-        })
+        .subtitle(omarchy_subtitle(app))
         .active(detected && app.config.borrow().follow_omarchy_theme)
         .sensitive(detected)
         .build();
     {
         let app = app.clone();
-        let color_groups = color_groups.clone();
         row.connect_active_notify(move |row| {
             app.config.borrow_mut().follow_omarchy_theme = row.is_active();
             app.schedule_save();
+            // The reload refreshes this page, colors and subtitle included.
             app.reload_omarchy_css();
-            set_color_groups_sensitive(&color_groups, !row.is_active());
+        });
+    }
+    {
+        let row = row.downgrade();
+        let app = Rc::downgrade(app);
+        ui.add_refresher(move || {
+            if let (Some(row), Some(app)) = (row.upgrade(), app.upgrade()) {
+                row.set_subtitle(&omarchy_subtitle(&app));
+            }
         });
     }
     group.add(&row);
     page.add(&group);
 }
 
-fn set_color_groups_sensitive(groups: &Rc<RefCell<Vec<adw::PreferencesGroup>>>, sensitive: bool) {
-    for group in groups.borrow().iter() {
-        group.set_sensitive(sensitive);
+/// The follow switch's subtitle: which theme, and where color edits go.
+fn omarchy_subtitle(app: &App) -> String {
+    if !omarchy::detected() {
+        return "No Omarchy theme found on this system.".into();
+    }
+    let current =
+        omarchy::theme_name().map_or_else(String::new, |name| format!("Currently {name}. "));
+    if !app.following_omarchy() {
+        return format!("{current}Color edits below are saved to style.css.");
+    }
+    match omarchy::user_theme_css() {
+        Some(path) => format!(
+            "{current}The colors below are the theme's; edits are saved to {}. Font and any rule that is not a color stay in style.css.",
+            home_relative(&path)
+        ),
+        None => format!("{current}No theme name to save color edits under."),
+    }
+}
+
+/// `path` with the home directory written as `~`.
+fn home_relative(path: &std::path::Path) -> String {
+    match path.strip_prefix(gtk::glib::home_dir()) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
     }
 }
 
@@ -703,10 +773,8 @@ fn add_theme_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<Appearanc
                 return;
             };
             match style::apply_theme(&theme) {
-                Ok(()) => {
-                    app.reload_user_css();
-                    ui.refresh_controls();
-                }
+                // The reload refreshes every control on this page.
+                Ok(()) => app.reload_user_css(),
                 Err(error) => {
                     show_theme_error(&app, "Could Not Switch Theme", &error);
                     if let Err(refresh_error) = ui.refresh_themes() {
@@ -893,31 +961,22 @@ fn add_color_group(
         let button = gtk::ColorDialogButton::new(Some(dialog));
         button.set_valign(gtk::Align::Center);
         button.set_tooltip_text(Some(declaration_name(field.declaration)));
-        let value = style::value(field.declaration).unwrap_or_else(|| field.fallback.into());
-        let color = gtk::gdk::RGBA::parse(&value)
-            .or_else(|_| gtk::gdk::RGBA::parse(field.fallback))
-            .expect("appearance fallback colors are valid");
-        button.set_rgba(&color);
+        button.set_rgba(&ui.color(field));
         {
             let button = button.downgrade();
+            let weak_ui = Rc::downgrade(ui);
             let field = *field;
             ui.add_refresher(move || {
-                let Some(button) = button.upgrade() else {
-                    return;
-                };
-                let value =
-                    style::value(field.declaration).unwrap_or_else(|| field.fallback.to_string());
-                let color = gtk::gdk::RGBA::parse(&value)
-                    .or_else(|_| gtk::gdk::RGBA::parse(field.fallback))
-                    .expect("appearance fallback colors are valid");
-                button.set_rgba(&color);
+                if let (Some(button), Some(ui)) = (button.upgrade(), weak_ui.upgrade()) {
+                    button.set_rgba(&ui.color(&field));
+                }
             });
         }
         let declaration = field.declaration;
         let app = app.clone();
         let ui = ui.clone();
         button.connect_rgba_notify(move |button| {
-            write(&app, &ui, declaration, &css_color(&button.rgba()))
+            write_color(&app, &ui, declaration, &css_color(&button.rgba()))
         });
         row.add_suffix(&button);
         group.add(&row);
@@ -973,6 +1032,64 @@ fn add_opacity_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<Appeara
                 Declaration::CustomProperty(key),
                 &format!("{:.2}", adjustment.value() / 100.0),
             );
+        });
+        group.add(&row);
+    }
+    page.add(&group);
+}
+
+/// How see-through the sidebar and the terminal area are. Each slider writes
+/// to style.css, so it holds across Omarchy themes, unless the theme's own
+/// vmux.css sets that opacity: that value would win, so the slider edits it
+/// there instead.
+fn add_transparency_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<AppearanceUi>) {
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Transparency");
+    group.set_description(Some(
+        "Let the desktop show through. Only backgrounds fade; text stays solid.",
+    ));
+    for (name, title, description, pick) in [
+        (
+            style::SIDEBAR_OPACITY,
+            "Sidebar opacity",
+            "The zone sidebar.",
+            (|(sidebar, _)| sidebar) as fn((f32, f32)) -> f32,
+        ),
+        (
+            style::TERMINAL_OPACITY,
+            "Terminal opacity",
+            "Pane tab bars and terminals. Multiplies the terminal background's own alpha.",
+            |(_, terminal)| terminal,
+        ),
+    ] {
+        let adjustment = gtk::Adjustment::new(
+            f64::from(pick(app.opacities())) * 100.0,
+            0.0,
+            100.0,
+            5.0,
+            10.0,
+            0.0,
+        );
+        let row = adw::SpinRow::builder()
+            .title(title)
+            .subtitle(description)
+            .adjustment(&adjustment)
+            .digits(0)
+            .build();
+        row.set_tooltip_text(Some(name));
+        {
+            let adjustment = adjustment.downgrade();
+            let app = Rc::downgrade(app);
+            ui.add_refresher(move || {
+                if let (Some(adjustment), Some(app)) = (adjustment.upgrade(), app.upgrade()) {
+                    adjustment.set_value(f64::from(pick(app.opacities())) * 100.0);
+                }
+            });
+        }
+        let app = app.clone();
+        let ui = ui.clone();
+        adjustment.connect_value_changed(move |adjustment| {
+            write_opacity(&app, &ui, name, (adjustment.value() / 100.0) as f32);
         });
         group.add(&row);
     }
@@ -1066,6 +1183,50 @@ fn write(app: &App, ui: &AppearanceUi, declaration: Declaration, value: &str) {
     } else {
         app.reload_user_css();
         ui.mark_custom();
+    }
+}
+
+/// Save one color where it takes effect: the Omarchy theme's own vmux.css
+/// while following it, style.css otherwise.
+fn write_color(app: &App, ui: &AppearanceUi, declaration: Declaration, value: &str) {
+    if ui.syncing.get() {
+        return;
+    }
+    if !app.following_omarchy() {
+        write(app, ui, declaration, value);
+        return;
+    }
+    let saved = style::check_value(value).and_then(|()| {
+        omarchy::update_theme_css(|css| style::replace_value(css, declaration, value))
+    });
+    match saved {
+        Ok(_) => app.reload_omarchy_css(),
+        Err(error) => eprintln!(
+            "vmux: cannot update {} in the theme's vmux.css: {error}",
+            declaration_name(declaration)
+        ),
+    }
+}
+
+/// Save an opacity token where it takes effect; see [`add_transparency_group`].
+fn write_opacity(app: &App, ui: &AppearanceUi, name: &'static str, opacity: f32) {
+    if ui.syncing.get() {
+        return;
+    }
+    let in_theme = app.following_omarchy()
+        && omarchy::theme_css().is_some_and(|css| style::opacity_in(&css, name).is_some());
+    let saved = if in_theme {
+        omarchy::update_theme_css(|css| style::with_opacity(css, name, opacity)).map(drop)
+    } else {
+        style::set_opacity(name, opacity)
+    };
+    match saved {
+        Ok(()) if in_theme => app.reload_omarchy_css(),
+        Ok(()) => {
+            app.reload_user_css();
+            ui.mark_custom();
+        }
+        Err(error) => eprintln!("vmux: cannot set {name}: {error}"),
     }
 }
 
