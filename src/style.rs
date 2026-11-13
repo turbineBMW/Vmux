@@ -621,9 +621,91 @@ fn declaration_range(css: &str, declaration: Declaration) -> Option<std::ops::Ra
     found
 }
 
+/// How opaque the sidebar's background is, a plain number from 0 to 1. Unlike the GUI-managed
+/// tokens, this one is meant to be set by hand or by an Omarchy theme's
+/// `vmux.css`, so it may sit in any rule and on one line with others.
+pub const SIDEBAR_OPACITY: &str = "--vmux-sidebar-opacity";
+
+/// The last value `name` is given anywhere in `css`, as an opacity clamped
+/// to 0..=1. Comments are skipped; selectors are not checked, since the
+/// built-in rule reads the token wherever the cascade puts it. A last value
+/// that isn't a number reads as 1, so the window stays opaque.
+pub fn opacity_in(css: &str, name: &str) -> Option<f32> {
+    let mut found = None;
+    let mut rest = css;
+    while let Some(index) = rest.find(['/', '-']) {
+        let tail = &rest[index..];
+        if let Some(comment) = tail.strip_prefix("/*") {
+            rest = comment.find("*/").map_or("", |end| &comment[end + 2..]);
+            continue;
+        }
+        let Some(after) = tail.strip_prefix(name) else {
+            rest = &tail[1..];
+            continue;
+        };
+        // `--vmux-sidebar-opacity-foo` is a different property.
+        let Some(value) = after.trim_start().strip_prefix(':') else {
+            rest = after;
+            continue;
+        };
+        let end = value.find([';', '}', '\n']).unwrap_or(value.len());
+        // A plain number only: GTK's alpha() rejects a percentage or a typo,
+        // which unsets the sidebar's background. GTK still lets that last
+        // declaration win the cascade, so it reads as opaque here rather than
+        // falling back to an earlier valid value; otherwise the window would
+        // be cleared behind a sidebar with no background at all.
+        let parsed = value[..end].trim().parse::<f32>().ok();
+        found = Some(
+            parsed
+                .filter(|o| o.is_finite())
+                .map_or(1.0, |o| o.clamp(0.0, 1.0)),
+        );
+        rest = &value[end..];
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_opacity_is_read_from_any_rule_and_the_last_one_wins() {
+        let css = "/* --vmux-sidebar-opacity: 0.1; */\n\
+                   :root {\n  --vmux-sidebar-opacity: 0.8;\n}\n\
+                   :root { --vmux-sidebar-opacity:0.6 }\n";
+        assert_eq!(opacity_in(css, SIDEBAR_OPACITY), Some(0.6));
+        // GTK's alpha() takes no percentage, and a bad last value still wins
+        // the cascade, so it reads as opaque instead of an earlier value.
+        assert_eq!(
+            opacity_in(":root { --vmux-sidebar-opacity: 75%; }", SIDEBAR_OPACITY),
+            Some(1.0)
+        );
+        assert_eq!(
+            opacity_in(
+                ":root { --vmux-sidebar-opacity: 0.8; }\n:root { --vmux-sidebar-opacity: 80%; }",
+                SIDEBAR_OPACITY
+            ),
+            Some(1.0)
+        );
+        // Out of range clamps; look-alike names are ignored.
+        assert_eq!(
+            opacity_in(":root { --vmux-sidebar-opacity: 2; }", SIDEBAR_OPACITY),
+            Some(1.0)
+        );
+        assert_eq!(
+            opacity_in(":root { --vmux-sidebar-opacity: lots; }", SIDEBAR_OPACITY),
+            Some(1.0)
+        );
+        assert_eq!(
+            opacity_in(":root { --vmux-sidebar-opacity-x: 0.5; }", SIDEBAR_OPACITY),
+            None
+        );
+        assert_eq!(
+            opacity_in("/* --vmux-sidebar-opacity: 0.5", SIDEBAR_OPACITY),
+            None
+        );
+    }
 
     #[test]
     fn template_defines_the_complete_terminal_appearance() {

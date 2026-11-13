@@ -47,6 +47,9 @@ pub struct App {
     /// managed block). Empty whenever following is off.
     omarchy_provider: gtk::CssProvider,
     omarchy_monitor: RefCell<Option<gio::FileMonitor>>,
+    /// `--vmux-sidebar-opacity` as the cascade resolves it, worked out on
+    /// every stylesheet or theme reload. Below 1 the window goes transparent.
+    sidebar_opacity: Cell<f32>,
     /// Panes whose last tab was torn off by a drag; resolved by
     /// [`Self::sweep_drag_emptied`] once the drag concludes.
     drag_emptied: RefCell<Vec<PendingCollapse>>,
@@ -92,6 +95,7 @@ pub fn build(gtk_app: &adw::Application) {
         style_monitor: RefCell::new(None),
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
+        sidebar_opacity: Cell::new(1.0),
         drag_emptied: RefCell::new(Vec::new()),
         resumed_sessions: RefCell::default(),
     });
@@ -349,6 +353,15 @@ impl App {
             Some(theme) if theme.light => adw::ColorScheme::ForceLight,
             _ => adw::ColorScheme::ForceDark,
         });
+        // The theme's provider sits above style.css, so its value wins
+        // whenever it states one.
+        self.sidebar_opacity.set(
+            theme
+                .as_ref()
+                .and_then(|theme| style::opacity_in(&theme.css, style::SIDEBAR_OPACITY))
+                .or_else(|| style::opacity_in(&style::load(), style::SIDEBAR_OPACITY))
+                .unwrap_or(1.0),
+        );
         self.apply_terminal_style();
         self.sync_window_transparency();
     }
@@ -1179,14 +1192,16 @@ impl App {
     }
 
     /// The "vmux-transparent" class clears the window background so the
-    /// terminal's alpha-blended background reaches the compositor.
+    /// terminal's alpha-blended background, or a translucent sidebar, reaches
+    /// the compositor.
     #[allow(deprecated)]
     pub fn sync_window_transparency(&self) {
-        let transparent = self
-            .window
-            .style_context()
-            .lookup_color(style::TERMINAL_BACKGROUND)
-            .is_some_and(|color| color.alpha() < 1.0);
+        let transparent = self.sidebar_opacity.get() < 1.0
+            || self
+                .window
+                .style_context()
+                .lookup_color(style::TERMINAL_BACKGROUND)
+                .is_some_and(|color| color.alpha() < 1.0);
         if transparent {
             self.window.add_css_class("vmux-transparent");
         } else {

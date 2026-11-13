@@ -11,8 +11,10 @@
 //! read.
 //!
 //! A theme may also ship its own `vmux.css` — either by hand or from a
-//! `~/.config/omarchy/themed/vmux.css.tpl` template — and that file is used
-//! verbatim in place of everything derived here. Such a file may carry a
+//! `~/.config/omarchy/themed/vmux.css.tpl` template. It is appended after
+//! everything derived here, so whatever it states wins and whatever it leaves
+//! out keeps the palette's value: a file can restate every token, or carry a
+//! single line such as `:root { --vmux-sidebar-opacity: 0.8; }`. It may carry a
 //! `vmux-mode: dark` (or `light`) marker, which then decides the libadwaita
 //! color scheme instead of `colors.toml`: a theme keeping vmux dark under a
 //! light desktop needs both halves to agree.
@@ -100,13 +102,18 @@ fn load_in(dir: &Path, background_alpha: f32) -> Option<Theme> {
         .map(|colors| Palette::resolve(colors, dir.join("light.mode").exists()));
 
     // A theme that speaks vmux directly outranks anything derived here, and
-    // that includes the color scheme when it names one.
-    let (css, mode) = match fs::read_to_string(dir.join("vmux.css")) {
-        Ok(css) => {
-            let mode = css_mode(&css);
-            (css, mode)
-        }
-        Err(_) => (palette.as_ref()?.to_css(background_alpha), None),
+    // that includes the color scheme when it names one. It is layered over
+    // the derived palette rather than replacing it, so a partial file only
+    // changes what it names.
+    let own = fs::read_to_string(dir.join("vmux.css")).ok();
+    let derived = palette
+        .as_ref()
+        .map(|palette| palette.to_css(background_alpha));
+    let mode = own.as_deref().and_then(css_mode);
+    let css = match (derived, own) {
+        (Some(derived), Some(own)) => format!("{derived}\n/* The theme's own vmux.css. */\n{own}"),
+        (Some(css), None) | (None, Some(css)) => css,
+        (None, None) => return None,
     };
     Some(Theme {
         css,
@@ -632,6 +639,25 @@ bright_red = "#db9f9c"
         let theme = load_in(dir.path(), 0.5).unwrap();
         assert!(theme.light);
         assert!(theme.css.contains("#eeeeee"));
+    }
+
+    /// A theme's vmux.css only has to name what it changes: the palette
+    /// stays underneath, and the file's own declarations come last so they
+    /// win the cascade.
+    #[test]
+    fn a_themes_own_css_is_layered_over_the_palette() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("colors.toml"), OSAKA_JADE).unwrap();
+        fs::write(
+            dir.path().join("vmux.css"),
+            ":root { --vmux-sidebar-opacity: 0.8; }\n",
+        )
+        .unwrap();
+        let theme = load_in(dir.path(), 1.0).unwrap();
+        let palette = theme.css.find("--accent-bg-color: #509475;").unwrap();
+        let own = theme.css.find("--vmux-sidebar-opacity: 0.8;").unwrap();
+        assert!(palette < own);
+        assert!(!theme.light);
     }
 
     /// Transparency is the user's setting, not the theme's, so it survives.
