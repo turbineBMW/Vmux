@@ -371,8 +371,11 @@ impl Palette {
         // translucent black while the sidebar's edge took the palette color.
         // `tabbar .box` is the only rule this reaches in vmux — headerbars
         // inside an AdwToolbarView drop their own shadow — so it just lines
-        // the two seams up.
-        property("--headerbar-shade-color", &border);
+        // the two seams up. It points at the border rather than copying it so
+        // a theme's own vmux.css, which names -border-color and not the
+        // shade, moves both seams together instead of leaving this one on
+        // the derived palette (a light seam under a dark vmux.css).
+        property("--headerbar-shade-color", "var(--headerbar-border-color)");
         for prefix in ["--card", "--popover", "--dialog"] {
             property(
                 &format!("{prefix}-bg-color"),
@@ -683,7 +686,8 @@ bright_red = "#db9f9c"
         )
         .to_css(1.0);
         assert!(css.contains("--sidebar-border-color: #22362a;"));
-        assert!(css.contains("--headerbar-shade-color: #22362a;"));
+        assert!(css.contains("--headerbar-border-color: #22362a;"));
+        assert!(css.contains("--headerbar-shade-color: var(--headerbar-border-color);"));
     }
 
     /// A light theme's lighter_background sits above the chrome it draws on,
@@ -701,7 +705,7 @@ bright_red = "#db9f9c"
         .to_css(1.0);
         // 18% of the way from the chrome (#d4d6e0) toward the foreground.
         assert!(css.contains("--sidebar-border-color: #b8c1da;"));
-        assert!(css.contains("--headerbar-shade-color: #b8c1da;"));
+        assert!(css.contains("--headerbar-border-color: #b8c1da;"));
     }
 
     #[test]
