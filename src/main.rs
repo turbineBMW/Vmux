@@ -140,13 +140,16 @@ window.vmux-transparent .vmux-pane > statuspage {
    headerbar background into the wallpaper. Scoped to the main chrome so the
    sidebar header keeps the sidebar background showing through. */
 window.vmux-transparent toolbarview.vmux-chrome > .top-bar { background-color: var(--window-bg-color); }
-/* Pane dividers also rely on the window background; render them like the
-   sidebar's edge border (border color over sidebar bg). */
-window.vmux-transparent paned > separator {
-    background-color: var(--sidebar-bg-color);
-    background-image: image(var(--sidebar-border-color));
-    box-shadow: none;
-}
+/* Terminal pane border: --vmux-pane-border-color is the one hairline color
+   inside the terminal area, the bottom edge of every pane's tab bar and the
+   dividers between split panes. libadwaita draws the first from the
+   headerbar shade and the second from currentColor, so left alone they never
+   matched. The default keeps the shade the tab bars already had. */
+:root { --vmux-pane-border-color: var(--headerbar-shade-color); }
+.vmux-pane tabbar .box { box-shadow: inset 0 -1px var(--vmux-pane-border-color); }
+paned.vmux-split > separator { background: none; }
+paned.vmux-split.horizontal > separator { box-shadow: inset 1px 0 var(--vmux-pane-border-color); }
+paned.vmux-split.vertical > separator { box-shadow: inset 0 1px var(--vmux-pane-border-color); }
 /* Only the focused pane's selected tab carries the accent; selected tabs in
    unfocused panes fade to a faint gray so the eye finds focus immediately.
    Stock Adwaita hides the highlight entirely on single-tab panes, so these
