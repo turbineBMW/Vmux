@@ -116,7 +116,24 @@ overlay-split-view > .sidebar-pane {
 overlay-split-view > .sidebar-pane:backdrop {
     background-color: alpha(var(--sidebar-backdrop-color), var(--vmux-sidebar-opacity));
 }
+/* Terminal-area opacity: --vmux-terminal-opacity (0 to 1) fades the pane
+   tab bars' background, and App folds it into the alpha of every terminal's
+   background (term::set_opacity), so the tabs and the terminal under them
+   fade together. Tab labels and terminal text stay solid. Below 1 the window
+   background is cleared, as for the sidebar. */
+:root { --vmux-terminal-opacity: 1; }
+.vmux-pane tabbar .box {
+    background-color: alpha(var(--headerbar-bg-color), var(--vmux-terminal-opacity));
+}
+.vmux-pane tabbar .box:backdrop {
+    background-color: alpha(var(--headerbar-backdrop-color), var(--vmux-terminal-opacity));
+}
 window.vmux-transparent { background-color: transparent; }
+/* A pane with no tabs shows nothing but the window background removed
+   above; give it the look of an empty terminal instead of a hole. */
+window.vmux-transparent .vmux-pane > statuspage {
+    background-color: alpha(@vmux_terminal_background, var(--vmux-terminal-opacity));
+}
 /* The flat headerbar relies on the window background removed above. Paint the
    replacement on the .top-bar revealer, NOT on the headerbar itself: GTK dims
    the windowhandle subtree to 50% on backdrop, which would fade an opaque

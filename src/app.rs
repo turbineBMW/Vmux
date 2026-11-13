@@ -50,6 +50,12 @@ pub struct App {
     /// `--vmux-sidebar-opacity` as the cascade resolves it, worked out on
     /// every stylesheet or theme reload. Below 1 the window goes transparent.
     sidebar_opacity: Cell<f32>,
+    /// `--vmux-terminal-opacity`, resolved alongside the sidebar's. It fades
+    /// the pane tab bars (in CSS) and the terminals (through term::set_opacity).
+    terminal_opacity: Cell<f32>,
+    /// Called after every stylesheet or theme reload, so an open Appearance
+    /// page shows what is now in force. One returning false is dropped.
+    style_listeners: RefCell<Vec<Box<dyn Fn() -> bool>>>,
     /// Panes whose last tab was torn off by a drag; resolved by
     /// [`Self::sweep_drag_emptied`] once the drag concludes.
     drag_emptied: RefCell<Vec<PendingCollapse>>,
@@ -96,6 +102,8 @@ pub fn build(gtk_app: &adw::Application) {
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
         sidebar_opacity: Cell::new(1.0),
+        terminal_opacity: Cell::new(1.0),
+        style_listeners: RefCell::default(),
         drag_emptied: RefCell::new(Vec::new()),
         resumed_sessions: RefCell::default(),
     });
@@ -355,21 +363,49 @@ impl App {
         });
         // The theme's provider sits above style.css, so its value wins
         // whenever it states one.
-        self.sidebar_opacity.set(
+        let user_css = style::load();
+        let opacity = |name| {
             theme
                 .as_ref()
-                .and_then(|theme| style::opacity_in(&theme.css, style::SIDEBAR_OPACITY))
-                .or_else(|| style::opacity_in(&style::load(), style::SIDEBAR_OPACITY))
-                .unwrap_or(1.0),
-        );
+                .and_then(|theme| style::opacity_in(&theme.css, name))
+                .or_else(|| style::opacity_in(&user_css, name))
+                .unwrap_or(1.0)
+        };
+        self.sidebar_opacity.set(opacity(style::SIDEBAR_OPACITY));
+        self.terminal_opacity.set(opacity(style::TERMINAL_OPACITY));
+        term::set_opacity(self.terminal_opacity.get());
         self.apply_terminal_style();
         self.sync_window_transparency();
+        // Taken out while they run: a listener may reload again.
+        let listeners = self.style_listeners.take();
+        let mut kept: Vec<_> = listeners
+            .into_iter()
+            .filter(|listener| listener())
+            .collect();
+        kept.append(&mut self.style_listeners.borrow_mut());
+        *self.style_listeners.borrow_mut() = kept;
+    }
+
+    /// Run `listener` after every stylesheet or theme reload until it
+    /// returns false.
+    pub(crate) fn on_style_reloaded(&self, listener: impl Fn() -> bool + 'static) {
+        self.style_listeners.borrow_mut().push(Box::new(listener));
+    }
+
+    /// Whether the Omarchy theme is driving vmux's colors right now.
+    pub(crate) fn following_omarchy(&self) -> bool {
+        self.config.borrow().follow_omarchy_theme && omarchy::detected()
+    }
+
+    /// The sidebar and terminal-area opacities as the cascade resolves them.
+    pub(crate) fn opacities(&self) -> (f32, f32) {
+        (self.sidebar_opacity.get(), self.terminal_opacity.get())
     }
 
     /// The alpha the user gave the terminal background in style.css. An
     /// Omarchy palette is opaque hex, and carrying this over is what keeps
     /// enabling the theme from silently turning a transparent terminal solid.
-    fn terminal_background_alpha(&self) -> f32 {
+    pub(crate) fn terminal_background_alpha(&self) -> f32 {
         style::value(style::Declaration::NamedColor(style::TERMINAL_BACKGROUND))
             .and_then(|value| gtk::gdk::RGBA::parse(&value).ok())
             .map_or(1.0, |color| color.alpha())
@@ -1192,11 +1228,12 @@ impl App {
     }
 
     /// The "vmux-transparent" class clears the window background so the
-    /// terminal's alpha-blended background, or a translucent sidebar, reaches
-    /// the compositor.
+    /// terminal's alpha-blended background, or a translucent sidebar or
+    /// terminal area, reaches the compositor.
     #[allow(deprecated)]
     pub fn sync_window_transparency(&self) {
         let transparent = self.sidebar_opacity.get() < 1.0
+            || self.terminal_opacity.get() < 1.0
             || self
                 .window
                 .style_context()
