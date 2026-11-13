@@ -482,6 +482,18 @@ pub fn spawn_argv(term: &vte::Terminal, cwd: &str, argv: &[String]) {
     env.push("TERM=xterm-256color".into());
     env.push("TERM_PROGRAM=vmux".into());
     env.push(concat!("TERM_PROGRAM_VERSION=", env!("CARGO_PKG_VERSION")).to_string());
+    // pi picks its image protocol from TERM_PROGRAM and friends, never by
+    // querying the terminal, so it doesn't know vmux draws kitty graphics.
+    // Tell it, unless the user already chose a protocol.
+    if std::env::var_os("PI_IMAGE_PROTOCOL").is_none() {
+        env.push("PI_IMAGE_PROTOCOL=kitty".into());
+    }
+    // Claude Code only draws images when XTVERSION names kitty or Ghostty;
+    // vte answers with its own name. Its kitty path uses Unicode
+    // placeholders, which the vendored libvte draws.
+    if std::env::var_os("CLAUDE_CODE_FORCE_TERMINAL_IMAGES").is_none() {
+        env.push("CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1".into());
+    }
     match relay_path() {
         Some(relay) => {
             let mut wrapped = Vec::with_capacity(argv.len() + 1);
