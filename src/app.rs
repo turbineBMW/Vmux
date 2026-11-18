@@ -47,10 +47,17 @@ pub struct App {
     /// managed block). Empty whenever following is off.
     omarchy_provider: gtk::CssProvider,
     omarchy_monitor: RefCell<Option<gio::FileMonitor>>,
-    /// `--vmux-sidebar-opacity` as the cascade resolves it, worked out on
-    /// every stylesheet or theme reload. Below 1 the window goes transparent.
+    /// The opacities in force, restated above `omarchy_provider` so that a
+    /// theme's vmux.css can't change them: they are vmux's own settings.
+    opacity_provider: gtk::CssProvider,
+    /// `--vmux-sidebar-opacity` in force: style.css's value while the
+    /// Transparent sidebar setting is on, otherwise 1. Below 1 the window goes
+    /// transparent.
     sidebar_opacity: Cell<f32>,
-    /// `--vmux-terminal-opacity`, resolved alongside the sidebar's. It fades
+    /// style.css's `--vmux-sidebar-opacity`, what the slider shows whether
+    /// or not the setting is on.
+    sidebar_opacity_setting: Cell<f32>,
+    /// style.css's `--vmux-terminal-opacity`, read alongside the sidebar's. It fades
     /// the pane tab bars (in CSS) and the terminals (through term::set_opacity).
     terminal_opacity: Cell<f32>,
     /// Called after every stylesheet or theme reload, so an open Appearance
@@ -101,7 +108,9 @@ pub fn build(gtk_app: &adw::Application) {
         style_monitor: RefCell::new(None),
         omarchy_provider: gtk::CssProvider::new(),
         omarchy_monitor: RefCell::new(None),
+        opacity_provider: gtk::CssProvider::new(),
         sidebar_opacity: Cell::new(1.0),
+        sidebar_opacity_setting: Cell::new(DEFAULT_SIDEBAR_OPACITY),
         terminal_opacity: Cell::new(1.0),
         style_listeners: RefCell::default(),
         drag_emptied: RefCell::new(Vec::new()),
@@ -132,6 +141,7 @@ pub fn build(gtk_app: &adw::Application) {
     // up, rather than clobbering it via sync_create().
     app.split_view.set_show_sidebar(st.config.show_sidebar);
     app.reinstall_shortcuts();
+    app.adopt_theme_opacities();
     app.install_user_css();
     app.install_omarchy_css();
     app.sync_window_transparency();
@@ -154,6 +164,19 @@ pub fn build(gtk_app: &adw::Application) {
     // Presenting resolves each terminal's CSS-derived Pango font against the
     // display; transfer that computed font and the palette into VTE now.
     app.apply_terminal_style();
+}
+
+/// The sidebar opacity the slider starts at when style.css sets none.
+const DEFAULT_SIDEBAR_OPACITY: f32 = 0.8;
+
+/// The sidebar opacity in force: `opacity` while the Transparent sidebar
+/// setting is on, solid otherwise.
+fn sidebar_opacity(transparent: bool, opacity: f32) -> f32 {
+    if transparent {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
 }
 
 impl App {
@@ -334,6 +357,11 @@ impl App {
                 &self.omarchy_provider,
                 gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
             );
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &self.opacity_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_USER + 2,
+            );
         }
         self.omarchy_provider
             .connect_parsing_error(|_, section, err| {
@@ -361,18 +389,25 @@ impl App {
             Some(theme) if theme.light => adw::ColorScheme::ForceLight,
             _ => adw::ColorScheme::ForceDark,
         });
-        // The theme's provider sits above style.css, so its value wins
-        // whenever it states one.
+        // The opacities are vmux's own: style.css states them (Appearance →
+        // Transparency writes there), and a theme's vmux.css has no say. They
+        // are restated in a provider above the theme's so its CSS can't win.
         let user_css = style::load();
-        let opacity = |name| {
-            theme
-                .as_ref()
-                .and_then(|theme| style::opacity_in(&theme.css, name))
-                .or_else(|| style::opacity_in(&user_css, name))
-                .unwrap_or(1.0)
-        };
-        self.sidebar_opacity.set(opacity(style::SIDEBAR_OPACITY));
-        self.terminal_opacity.set(opacity(style::TERMINAL_OPACITY));
+        let setting =
+            style::opacity_in(&user_css, style::SIDEBAR_OPACITY).unwrap_or(DEFAULT_SIDEBAR_OPACITY);
+        let transparent = self.config.borrow().transparent_sidebar.unwrap_or(false);
+        let (sidebar, terminal) = (
+            sidebar_opacity(transparent, setting),
+            style::opacity_in(&user_css, style::TERMINAL_OPACITY).unwrap_or(1.0),
+        );
+        self.opacity_provider.load_from_data(&format!(
+            ":root {{ {}: {sidebar:.2}; {}: {terminal:.2}; }}",
+            style::SIDEBAR_OPACITY,
+            style::TERMINAL_OPACITY
+        ));
+        self.sidebar_opacity_setting.set(setting);
+        self.sidebar_opacity.set(sidebar);
+        self.terminal_opacity.set(terminal);
         term::set_opacity(self.terminal_opacity.get());
         self.apply_terminal_style();
         self.sync_window_transparency();
@@ -397,9 +432,46 @@ impl App {
         self.config.borrow().follow_omarchy_theme && omarchy::detected()
     }
 
-    /// The sidebar and terminal-area opacities as the cascade resolves them.
+    /// The sidebar and terminal-area opacities style.css sets, as the
+    /// Transparency sliders show them. The sidebar's applies only while the
+    /// Transparent sidebar setting is on.
     pub(crate) fn opacities(&self) -> (f32, f32) {
-        (self.sidebar_opacity.get(), self.terminal_opacity.get())
+        (
+            self.sidebar_opacity_setting.get(),
+            self.terminal_opacity.get(),
+        )
+    }
+
+    /// Opacities used to be overridable by the Omarchy theme's vmux.css,
+    /// which outranked style.css. The first launch with the Transparent
+    /// sidebar setting copies any value the followed theme supplied into
+    /// style.css, and turns the setting on if the sidebar was see-through, so
+    /// nothing changes on screen; after that the theme has no say.
+    fn adopt_theme_opacities(&self) {
+        if self.config.borrow().transparent_sidebar.is_some() {
+            return;
+        }
+        let theme = self.following_omarchy().then(omarchy::theme_css).flatten();
+        let user_css = style::load();
+        let mut sidebar = style::opacity_in(&user_css, style::SIDEBAR_OPACITY);
+        for name in [style::SIDEBAR_OPACITY, style::TERMINAL_OPACITY] {
+            let Some(value) = theme
+                .as_deref()
+                .and_then(|css| style::opacity_in(css, name))
+            else {
+                continue;
+            };
+            if style::opacity_in(&user_css, name) != Some(value)
+                && let Err(error) = style::set_opacity(name, value)
+            {
+                eprintln!("vmux: cannot carry the theme's {name} into style.css: {error}");
+            }
+            if name == style::SIDEBAR_OPACITY {
+                sidebar = Some(value);
+            }
+        }
+        self.config.borrow_mut().transparent_sidebar = Some(sidebar.is_some_and(|o| o < 1.0));
+        self.save_now();
     }
 
     /// The alpha the user gave the terminal background in style.css. An
@@ -1375,5 +1447,17 @@ impl App {
         if let Some(old) = self.save_source.borrow_mut().replace(id) {
             old.remove();
         }
+    }
+}
+
+#[cfg(test)]
+mod sidebar_opacity_tests {
+    use super::sidebar_opacity;
+
+    #[test]
+    fn the_sidebar_is_only_see_through_while_the_setting_is_on() {
+        assert_eq!(sidebar_opacity(true, 0.8), 0.8);
+        assert_eq!(sidebar_opacity(false, 0.3), 1.0);
+        assert_eq!(sidebar_opacity(true, 1.5), 1.0);
     }
 }

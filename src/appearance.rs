@@ -1048,11 +1048,25 @@ fn add_transparency_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<Ap
     group.set_description(Some(
         "Let the desktop show through. Only backgrounds fade; text stays solid.",
     ));
+    let transparent_sidebar = adw::SwitchRow::builder()
+        .title("Transparent sidebar")
+        .subtitle("Fade the zone sidebar to the opacity below.")
+        .active(app.config.borrow().transparent_sidebar.unwrap_or(false))
+        .build();
+    {
+        let app = app.clone();
+        transparent_sidebar.connect_active_notify(move |row| {
+            app.config.borrow_mut().transparent_sidebar = Some(row.is_active());
+            app.schedule_save();
+            app.reload_omarchy_css();
+        });
+    }
+    group.add(&transparent_sidebar);
     for (name, title, description, pick) in [
         (
             style::SIDEBAR_OPACITY,
             "Sidebar opacity",
-            "The zone sidebar.",
+            "While Transparent sidebar is on.",
             (|(sidebar, _)| sidebar) as fn((f32, f32)) -> f32,
         ),
         (
@@ -1077,6 +1091,12 @@ fn add_transparency_group(page: &adw::PreferencesPage, app: &Rc<App>, ui: &Rc<Ap
             .digits(0)
             .build();
         row.set_tooltip_text(Some(name));
+        if name == style::SIDEBAR_OPACITY {
+            transparent_sidebar
+                .bind_property("active", &row, "sensitive")
+                .sync_create()
+                .build();
+        }
         {
             let adjustment = adjustment.downgrade();
             let app = Rc::downgrade(app);
@@ -1208,20 +1228,13 @@ fn write_color(app: &App, ui: &AppearanceUi, declaration: Declaration, value: &s
     }
 }
 
-/// Save an opacity token where it takes effect; see [`add_transparency_group`].
+/// Save an opacity token in style.css, the one place vmux's opacities live
+/// (an Omarchy theme can't change them); see [`add_transparency_group`].
 fn write_opacity(app: &App, ui: &AppearanceUi, name: &'static str, opacity: f32) {
     if ui.syncing.get() {
         return;
     }
-    let in_theme = app.following_omarchy()
-        && omarchy::theme_css().is_some_and(|css| style::opacity_in(&css, name).is_some());
-    let saved = if in_theme {
-        omarchy::update_theme_css(|css| style::with_opacity(css, name, opacity)).map(drop)
-    } else {
-        style::set_opacity(name, opacity)
-    };
-    match saved {
-        Ok(()) if in_theme => app.reload_omarchy_css(),
+    match style::set_opacity(name, opacity) {
         Ok(()) => {
             app.reload_user_css();
             ui.mark_custom();

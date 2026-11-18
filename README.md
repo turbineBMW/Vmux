@@ -186,10 +186,13 @@ Preferences (gear icon or `Ctrl+,`) has three pages:
 | `~/.config/vmux/style.css` | Live stylesheet, with every token documented inline |
 | `~/.config/vmux/themes/*.css` | Named theme snapshots |
 
-For a see-through sidebar or terminal area, use the sliders under
-*Appearance → Transparency*, or set the tokens by hand. For a see-through terminal, give `vmux_terminal_background` an `rgba()` with
-alpha < 1. For a see-through sidebar, set `--vmux-sidebar-opacity` (a number from 0 to 1, not a percentage)
-in a `:root` rule. It fades only the sidebar's background, not its text.
+For a see-through sidebar or terminal area, use *Appearance → Transparency*:
+turn on **Transparent sidebar** and pick its opacity, and set the terminal's
+opacity beside it. The sliders write the tokens into `style.css`, which you can
+also edit by hand. For a see-through terminal, give `vmux_terminal_background`
+an `rgba()` with alpha < 1. `--vmux-sidebar-opacity` (a number from 0 to 1, not
+a percentage, in a `:root` rule) fades only the sidebar's background, not its
+text, and only while *Transparent sidebar* is on.
 `--vmux-terminal-opacity` does the same for the terminal area: the pane tab
 bars and the terminals under them. It multiplies the terminal background's
 own alpha, and leaves tab labels and terminal text solid.
@@ -214,12 +217,10 @@ on, font, opacity and the alpha of `vmux_terminal_background` still apply.
 A theme can add its own `vmux.css` (same tokens as `style.css`) in its
 directory, or have one generated from `~/.config/omarchy/themed/vmux.css.tpl`.
 It is layered over the derived palette, so it only needs the tokens it
-changes. For example, a translucent sidebar for every theme:
-
-```css
-/* ~/.config/omarchy/themed/vmux.css.tpl */
-:root { --vmux-sidebar-opacity: 0.8; }
-```
+changes. The opacities are not the theme's to set: they come from
+`style.css` and *Appearance → Transparency* whatever the theme says. (A
+theme's opacities used to win; the first launch with the *Transparent sidebar*
+setting copies any it supplied into `style.css`.)
 
 </details>
 

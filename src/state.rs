@@ -53,6 +53,10 @@ pub struct Config {
     /// palette is layered over style.css rather than written into it, so
     /// turning this off restores the user's own colors untouched.
     pub follow_omarchy_theme: bool,
+    /// Fade the sidebar's background to style.css's `--vmux-sidebar-opacity`
+    /// (Appearance → Transparency). `None` until the first launch with this
+    /// setting, which turns it on if the sidebar was see-through already.
+    pub transparent_sidebar: Option<bool>,
     /// The agent the Ask Agent popup starts.
     pub ask_agent: crate::ask::AskAgent,
     /// Where Ask Agent opens the agent's terminal.
@@ -84,6 +88,7 @@ impl Default for Config {
             agent_panel_collapsed: false,
             zone_list_collapsed: false,
             follow_omarchy_theme: false,
+            transparent_sidebar: None,
             ask_agent: Default::default(),
             ask_agent_opens_in: Default::default(),
             ask_agent_screen: true,
