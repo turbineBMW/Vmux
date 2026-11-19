@@ -133,6 +133,12 @@ pub const TEMPLATE: &str = r#"/* vmux appearance. vmux-appearance-schema: 1
   --error-color: #f66151;
   --vmux-root-color: #c01c28;
   --vmux-remote-color: #9141ac;
+  --vmux-tab-bar-bg-color: #303030;
+  --vmux-tab-bar-backdrop-color: #242424;
+  --vmux-unfocused-tab-bg-color: rgba(255, 255, 255, 0.05);
+  --vmux-unfocused-tab-fg-color: #ffffff;
+  --vmux-unfocused-tab-hover-color: rgba(255, 255, 255, 0.09);
+  --vmux-unfocused-tab-pressed-color: rgba(255, 255, 255, 0.14);
   --vmux-git-clean-opacity: 0.55;
   --vmux-zone-path-opacity: 0.55;
 }

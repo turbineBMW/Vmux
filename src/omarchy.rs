@@ -438,6 +438,17 @@ impl Palette {
         // The tab bars' bottom edge and the split dividers: the same seam
         // as the sidebar's edge, so the same color.
         property("--vmux-pane-border-color", &border);
+        // Tab bars take the headerbar chrome; an unfocused pane's selected
+        // tab is a faint wash of the label color, as in the built-in style.
+        property("--vmux-tab-bar-bg-color", &chrome);
+        property("--vmux-tab-bar-backdrop-color", &backdrop);
+        property("--vmux-unfocused-tab-fg-color", &fg);
+        for (name, alpha) in [("bg", 0.05), ("hover", 0.09), ("pressed", 0.14)] {
+            property(
+                &format!("--vmux-unfocused-tab-{name}-color"),
+                &with_alpha(&fg, alpha),
+            );
+        }
         for prefix in ["--card", "--popover", "--dialog"] {
             property(
                 &format!("{prefix}-bg-color"),
@@ -781,6 +792,27 @@ bright_red = "#db9f9c"
         .to_css(1.0);
         assert!(css.contains("--sidebar-border-color: #22362a;"));
         assert!(css.contains("--vmux-pane-border-color: #22362a;"));
+    }
+
+    /// Tab bars take the chrome colors, and an unfocused pane's selected tab
+    /// is the label color at the built-in style's strengths.
+    #[test]
+    fn tab_bars_and_unfocused_tabs_follow_the_palette() {
+        let css = Palette::resolve(
+            "mode = \"dark\"\n\
+             background = \"#111c18\"\n\
+             dark_background = \"#0d1713\"\n\
+             darker_background = \"#0a120f\"\n\
+             foreground = \"#c1c497\"\n",
+            false,
+        )
+        .to_css(1.0);
+        assert!(css.contains("--vmux-tab-bar-bg-color: #0d1713;"));
+        assert!(css.contains("--vmux-tab-bar-backdrop-color: #0a120f;"));
+        assert!(css.contains("--vmux-unfocused-tab-fg-color: #c1c497;"));
+        assert!(css.contains("--vmux-unfocused-tab-bg-color: rgba(193, 196, 151, 0.05);"));
+        assert!(css.contains("--vmux-unfocused-tab-hover-color: rgba(193, 196, 151, 0.09);"));
+        assert!(css.contains("--vmux-unfocused-tab-pressed-color: rgba(193, 196, 151, 0.14);"));
     }
 
     /// A light theme's lighter_background sits above the chrome it draws on,
