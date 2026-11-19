@@ -159,6 +159,59 @@ pub fn show_settings(app: &Rc<App>) {
     }
     group.add(&scroll_row);
 
+    let smooth_row = adw::SwitchRow::builder()
+        .title("Smooth cursor")
+        .subtitle("The cursor glides to where it moves")
+        .active(app.config.borrow().cursor_smooth)
+        .build();
+    {
+        let app = app.clone();
+        smooth_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().cursor_smooth = row.is_active();
+            app.apply_terminal_settings();
+            app.schedule_save();
+        });
+    }
+    group.add(&smooth_row);
+
+    let trail_row = adw::SwitchRow::builder()
+        .title("Cursor trail")
+        .subtitle("A fading trail follows the cursor when it jumps")
+        .active(app.config.borrow().cursor_trail)
+        .build();
+    {
+        let app = app.clone();
+        trail_row.connect_active_notify(move |row| {
+            app.config.borrow_mut().cursor_trail = row.is_active();
+            app.apply_terminal_settings();
+            app.schedule_save();
+        });
+    }
+    group.add(&trail_row);
+
+    let anim_adj = gtk::Adjustment::new(
+        app.config.borrow().cursor_animation_ms as f64,
+        0.0,
+        1000.0,
+        10.0,
+        50.0,
+        0.0,
+    );
+    let anim_row = adw::SpinRow::builder()
+        .title("Cursor animation (ms)")
+        .adjustment(&anim_adj)
+        .digits(0)
+        .build();
+    {
+        let app = app.clone();
+        anim_adj.connect_value_changed(move |a| {
+            app.config.borrow_mut().cursor_animation_ms = a.value() as u32;
+            app.apply_terminal_settings();
+            app.schedule_save();
+        });
+    }
+    group.add(&anim_row);
+
     general.add(&group);
 
     let window_group = adw::PreferencesGroup::new();

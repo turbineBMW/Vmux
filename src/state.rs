@@ -17,6 +17,13 @@ pub struct Config {
     /// only softens text. Implemented by exporting GDK_SCALE=2 before GTK init.
     pub force_integer_scale: bool,
     pub scrollback_lines: i64,
+    /// The cursor glides to its new position instead of jumping there.
+    pub cursor_smooth: bool,
+    /// The cursor leaves a fading trail when it jumps further than the
+    /// next cell.
+    pub cursor_trail: bool,
+    /// How long the glide and the trail last, in milliseconds.
+    pub cursor_animation_ms: u32,
     pub shell: Option<String>,
     /// Hide the window titlebar (the sidebar header keeps the app menu).
     pub hide_titlebar: bool,
@@ -73,6 +80,9 @@ impl Default for Config {
         Self {
             force_integer_scale: true,
             scrollback_lines: 10_000,
+            cursor_smooth: false,
+            cursor_trail: false,
+            cursor_animation_ms: 150,
             shell: None,
             hide_titlebar: false,
             show_sidebar: true,
@@ -294,6 +304,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.scrollback_lines, 5000);
+        assert!(!cfg.cursor_smooth);
+        assert!(!cfg.cursor_trail);
+        assert_eq!(cfg.cursor_animation_ms, 150);
         assert!(cfg.desktop_notifications);
         assert!(!cfg.notify_on_bell);
         assert_eq!(cfg.notification_sound, Sound::SystemDefault);
