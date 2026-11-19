@@ -408,6 +408,21 @@ fn configure(term: &vte::Terminal, cfg: &Config, scale: f64) {
 pub fn apply_settings(term: &vte::Terminal, cfg: &Config) {
     term.set_scrollback_lines(cfg.scrollback_lines);
     enable_images(term);
+    set_cursor_animation(term, cfg);
+}
+
+/// Smooth cursor motion and the cursor trail come from Vmux's libvte fork;
+/// like the image protocols, probe for them so a stock libvte still works.
+fn set_cursor_animation(term: &vte::Terminal, cfg: &Config) {
+    if term.find_property("cursor-smooth").is_none() {
+        return;
+    }
+    term.set_property(
+        "cursor-animation-duration",
+        cfg.cursor_animation_ms.min(1000),
+    );
+    term.set_property("cursor-smooth", cfg.cursor_smooth);
+    term.set_property("cursor-trail", cfg.cursor_trail);
 }
 
 /// Turn on every inline image protocol the linked libvte offers. Vmux links
