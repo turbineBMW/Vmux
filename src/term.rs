@@ -442,6 +442,7 @@ thread_local! {
     /// `--vmux-terminal-opacity`, resolved by the front-end from its
     /// stylesheets. VTE paints its own background from an explicit color, so
     /// the CSS token can't reach it; [`apply_style`] folds it in instead.
+    /// The libvte fork applies the same alpha to colored cell backgrounds.
     static OPACITY: Cell<f32> = const { Cell::new(1.0) };
 }
 
@@ -493,6 +494,13 @@ pub fn apply_style(term: &vte::Terminal) {
     }
     let cursor = context.lookup_color(crate::style::TERMINAL_CURSOR);
     term.set_color_cursor(cursor.as_ref());
+    // Colored cell backgrounds (TUI panels, selections, reverse video) get
+    // the same opacity as the default background above, so the wallpaper
+    // shows through them as much as through the rest of the pane. Only the
+    // fills fade; text stays opaque. This comes from Vmux's libvte fork.
+    if term.find_property("background-opacity-cells").is_some() {
+        term.set_property("background-opacity-cells", true);
+    }
 }
 
 /// vte merges the supplied envv OVER the parent environment (adding
