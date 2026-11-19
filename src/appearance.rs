@@ -518,6 +518,42 @@ const TABS_SESSIONS: &[ColorField] = &[
         "Focused selected tab while it is being pressed.",
         "#304563"
     ),
+    custom!(
+        "--vmux-unfocused-tab-bg-color",
+        "Unfocused tab background",
+        "Selected tab in every other pane, and in all panes while the window is inactive.",
+        "rgba(255, 255, 255, 0.05)"
+    ),
+    custom!(
+        "--vmux-unfocused-tab-fg-color",
+        "Unfocused tab foreground",
+        "Label and icon on an unfocused pane's selected tab.",
+        "#ffffff"
+    ),
+    custom!(
+        "--vmux-unfocused-tab-hover-color",
+        "Unfocused tab hover",
+        "Unfocused selected tab while the pointer is over it.",
+        "rgba(255, 255, 255, 0.09)"
+    ),
+    custom!(
+        "--vmux-unfocused-tab-pressed-color",
+        "Unfocused tab pressed",
+        "Unfocused selected tab while it is being pressed.",
+        "rgba(255, 255, 255, 0.14)"
+    ),
+    custom!(
+        "--vmux-tab-bar-bg-color",
+        "Tab bar background",
+        "Strip behind each pane's tabs while the window is focused.",
+        "#303030"
+    ),
+    custom!(
+        "--vmux-tab-bar-backdrop-color",
+        "Inactive tab bar",
+        "Strip behind each pane's tabs while the window is unfocused.",
+        "#242424"
+    ),
 ];
 
 const GIT_COLORS: &[ColorField] = &[
@@ -630,7 +666,7 @@ pub fn page(app: &Rc<App>) -> adw::PreferencesPage {
         app,
         &ui,
         "Tabs & Sessions",
-        "Focused-tab states and root/remote security indicators.",
+        "Tab bars, focused and unfocused tab states, and root/remote indicators.",
         TABS_SESSIONS,
     ));
     color_groups.borrow_mut().push(add_color_group(
@@ -1307,7 +1343,7 @@ mod tests {
             assert!(names.insert(name), "duplicate appearance field: {name}");
             assert!(style::TEMPLATE.contains(name), "template is missing {name}");
         }
-        assert_eq!(names.len(), 68);
+        assert_eq!(names.len(), 74);
         for name in [
             "font-family",
             "font-size",

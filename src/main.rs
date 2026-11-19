@@ -122,11 +122,18 @@ overlay-split-view > .sidebar-pane:backdrop {
    fade together. Tab labels and terminal text stay solid. Below 1 the window
    background is cleared, as for the sidebar. */
 :root { --vmux-terminal-opacity: 1; }
+/* Tab bar colors: --vmux-tab-bar-bg-color while the window is focused,
+   --vmux-tab-bar-backdrop-color while it is not. They default to the
+   headerbar colors libadwaita gives a tab bar. */
+:root {
+    --vmux-tab-bar-bg-color: var(--headerbar-bg-color);
+    --vmux-tab-bar-backdrop-color: var(--headerbar-backdrop-color);
+}
 .vmux-pane tabbar .box {
-    background-color: alpha(var(--headerbar-bg-color), var(--vmux-terminal-opacity));
+    background-color: alpha(var(--vmux-tab-bar-bg-color), var(--vmux-terminal-opacity));
 }
 .vmux-pane tabbar .box:backdrop {
-    background-color: alpha(var(--headerbar-backdrop-color), var(--vmux-terminal-opacity));
+    background-color: alpha(var(--vmux-tab-bar-backdrop-color), var(--vmux-terminal-opacity));
 }
 window.vmux-transparent { background-color: transparent; }
 /* A pane with no tabs shows nothing but the window background removed
@@ -152,12 +159,23 @@ paned.vmux-split.horizontal > separator { box-shadow: inset 1px 0 var(--vmux-pan
 paned.vmux-split.vertical > separator { box-shadow: inset 0 1px var(--vmux-pane-border-color); }
 /* Only the focused pane's selected tab carries the accent; selected tabs in
    unfocused panes fade to a faint gray so the eye finds focus immediately.
-   Stock Adwaita hides the highlight entirely on single-tab panes, so these
-   also deliberately out-rank tabbox.single-tab: a lone tab still shows
-   focus. */
-tabbar tab:selected { background-color: color-mix(in srgb, currentColor 5%, transparent); }
-tabbar tab:selected:hover { background-color: color-mix(in srgb, currentColor 9%, transparent); }
-tabbar tab:selected:active { background-color: color-mix(in srgb, currentColor 14%, transparent); }
+   Every pane counts as unfocused while the window itself is, so these also
+   color the selected tabs of an inactive window. --vmux-unfocused-tab-*
+   override them; the defaults tint the label color. Stock Adwaita hides the
+   highlight entirely on single-tab panes, so these also deliberately
+   out-rank tabbox.single-tab: a lone tab still shows focus. */
+:root {
+    --vmux-unfocused-tab-bg-color: color-mix(in srgb, currentColor 5%, transparent);
+    --vmux-unfocused-tab-fg-color: var(--headerbar-fg-color);
+    --vmux-unfocused-tab-hover-color: color-mix(in srgb, currentColor 9%, transparent);
+    --vmux-unfocused-tab-pressed-color: color-mix(in srgb, currentColor 14%, transparent);
+}
+tabbar tab:selected {
+    background-color: var(--vmux-unfocused-tab-bg-color);
+    color: var(--vmux-unfocused-tab-fg-color);
+}
+tabbar tab:selected:hover { background-color: var(--vmux-unfocused-tab-hover-color); }
+tabbar tab:selected:active { background-color: var(--vmux-unfocused-tab-pressed-color); }
 .vmux-pane:focus-within tabbar tab:selected {
     background-color: color-mix(in srgb, var(--accent-bg-color) 25%, transparent);
     color: var(--accent-color);

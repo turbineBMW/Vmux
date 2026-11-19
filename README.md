@@ -206,6 +206,14 @@ every border inside the terminal area: the edge under each pane's tabs and
 the dividers between split panes. The sidebar's edge keeps
 `--sidebar-border-color`.
 
+The tab bars and tabs have their own tokens too, all under *Tabs & Sessions*
+in Preferences. `--vmux-tab-bar-bg-color` and `--vmux-tab-bar-backdrop-color`
+color the strip behind the tabs while the window is focused and unfocused.
+The focused pane's selected tab uses the `vmux_focused_tab_*` colors. Every
+other selected tab uses `--vmux-unfocused-tab-bg-color`, `-fg-color`,
+`-hover-color` and `-pressed-color`, and that includes the focused pane's tab
+while the window is inactive.
+
 <details>
 <summary>Omarchy theme details</summary>
 
